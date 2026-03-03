@@ -37,6 +37,8 @@ const defaultOrigins = [
   "https://*.primaria.ro",
   "https://api.mitchfromtransylvania.com",
   "https://mitchfromtransylvania.com",
+  "https://eufunding.ro",
+  "https://*.eufunding.ro",
   "http://localhost:3000",
   "http://localhost:3006",
 ];
