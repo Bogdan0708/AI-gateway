@@ -35,10 +35,12 @@ const port = Number(process.env.PORT || 8080);
 const defaultOrigins = [
   "https://primaria.ro",
   "https://*.primaria.ro",
+  "https://primaria-j3dqdqxnyq-lm.a.run.app",
   "https://api.mitchfromtransylvania.com",
   "https://mitchfromtransylvania.com",
   "https://eufunding.ro",
   "https://*.eufunding.ro",
+  "https://fondeu-platform-857599941951.europe-west2.run.app",
   "http://localhost:3000",
   "http://localhost:3006",
 ];
