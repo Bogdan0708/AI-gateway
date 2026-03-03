@@ -94,6 +94,7 @@ app.post(
         provider,
         model,
         max_tokens,
+        maxTokens,
         temperature,
         tenant_id,
         task_type,
@@ -102,6 +103,7 @@ app.post(
         provider?: string;
         model?: string;
         max_tokens?: number;
+        maxTokens?: number;
         temperature?: number;
         tenant_id?: string;
         task_type?: string;
@@ -111,7 +113,7 @@ app.post(
         messages,
         provider,
         model,
-        maxTokens: max_tokens,
+        maxTokens: max_tokens ?? maxTokens,
         temperature,
         tenantId: tenant_id,
         taskType: task_type,
@@ -170,15 +172,23 @@ app.post(
   validateSimpleCompletion,
   async (req: Request, res: Response) => {
     try {
-      const { prompt, system, provider, model, max_tokens, temperature } =
-        req.body as {
-          prompt: string;
-          system?: string;
-          provider?: string;
-          model?: string;
-          max_tokens?: number;
-          temperature?: number;
-        };
+      const {
+        prompt,
+        system,
+        provider,
+        model,
+        max_tokens,
+        maxTokens,
+        temperature,
+      } = req.body as {
+        prompt: string;
+        system?: string;
+        provider?: string;
+        model?: string;
+        max_tokens?: number;
+        maxTokens?: number;
+        temperature?: number;
+      };
 
       const messages: CompletionMessage[] = [];
       if (system) {
@@ -190,7 +200,7 @@ app.post(
         messages,
         provider,
         model,
-        maxTokens: max_tokens,
+        maxTokens: max_tokens ?? maxTokens,
         temperature,
       });
 
