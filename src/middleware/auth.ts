@@ -1,7 +1,7 @@
-import { NextFunction, Request, Response } from 'express';
-import { timingSafeEqual } from 'node:crypto';
+import { NextFunction, Request, Response } from "express";
+import { timingSafeEqual } from "node:crypto";
 
-const PUBLIC_PATHS = new Set(['/health', '/ping']);
+const PUBLIC_PATHS = new Set(["/health", "/ping"]);
 
 function safeCompare(a: string, b: string): boolean {
   const aBuf = Buffer.from(a);
@@ -14,7 +14,11 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(aBuf, bBuf);
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+export function authMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
   if (PUBLIC_PATHS.has(req.path)) {
     next();
     return;
@@ -23,14 +27,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   const masterKey = process.env.GATEWAY_MASTER_KEY;
   const authHeader = req.headers.authorization;
 
-  if (!masterKey || !authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized' });
+  if (!masterKey || !authHeader || !authHeader.startsWith("Bearer ")) {
+    res.status(401).json({ error: "Unauthorized" });
     return;
   }
 
   const token = authHeader.slice(7).trim();
   if (!token || !safeCompare(token, masterKey)) {
-    res.status(401).json({ error: 'Unauthorized' });
+    res.status(401).json({ error: "Unauthorized" });
     return;
   }
 

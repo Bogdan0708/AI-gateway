@@ -1,11 +1,16 @@
-import { logger } from '../lib/logger';
-import { CompletionRequest, CompletionResponse, ProviderConfig, ProviderName } from '../types';
-import { claudeProvider } from './claude';
-import { geminiProvider } from './gemini';
-import { groqProvider } from './groq';
-import { openaiProvider } from './openai';
-import { perplexityProvider } from './perplexity';
-import { xaiProvider } from './xai';
+import { logger } from "../lib/logger";
+import {
+  CompletionRequest,
+  CompletionResponse,
+  ProviderConfig,
+  ProviderName,
+} from "../types";
+import { claudeProvider } from "./claude";
+import { geminiProvider } from "./gemini";
+import { groqProvider } from "./groq";
+import { openaiProvider } from "./openai";
+import { perplexityProvider } from "./perplexity";
+import { xaiProvider } from "./xai";
 
 const providerRegistry: Record<ProviderName, ProviderConfig> = {
   openai: openaiProvider,
@@ -13,12 +18,21 @@ const providerRegistry: Record<ProviderName, ProviderConfig> = {
   gemini: geminiProvider,
   xai: xaiProvider,
   groq: groqProvider,
-  perplexity: perplexityProvider
+  perplexity: perplexityProvider,
 };
 
-const fallbackChain: ProviderName[] = ['openai', 'claude', 'gemini', 'xai', 'groq', 'perplexity'];
+const fallbackChain: ProviderName[] = [
+  "openai",
+  "claude",
+  "gemini",
+  "xai",
+  "groq",
+  "perplexity",
+];
 
-export const providers = fallbackChain.map((providerName) => providerRegistry[providerName]);
+export const providers = fallbackChain.map(
+  (providerName) => providerRegistry[providerName],
+);
 
 function resolveProviderOrder(requestedProvider?: string): ProviderConfig[] {
   const enabledProviders = fallbackChain
@@ -34,7 +48,10 @@ function resolveProviderOrder(requestedProvider?: string): ProviderConfig[] {
     return enabledProviders;
   }
 
-  return [requested, ...enabledProviders.filter((provider) => provider.name !== requested.name)];
+  return [
+    requested,
+    ...enabledProviders.filter((provider) => provider.name !== requested.name),
+  ];
 }
 
 export function listProviders(): Array<{
@@ -49,16 +66,18 @@ export function listProviders(): Array<{
       id: provider.name,
       enabled: provider.enabled,
       defaultModel: provider.defaultModel,
-      models: provider.models
+      models: provider.models,
     };
   });
 }
 
-export async function complete(request: CompletionRequest): Promise<CompletionResponse> {
+export async function complete(
+  request: CompletionRequest,
+): Promise<CompletionResponse> {
   const providersInOrder = resolveProviderOrder(request.provider);
 
   if (providersInOrder.length === 0) {
-    throw new Error('No AI providers configured');
+    throw new Error("No AI providers configured");
   }
 
   const maxTokens = request.maxTokens ?? 2048;
@@ -67,30 +86,32 @@ export async function complete(request: CompletionRequest): Promise<CompletionRe
   let lastError: Error | null = null;
 
   for (const provider of providersInOrder) {
-    const model = request.model && provider.models.includes(request.model)
-      ? request.model
-      : provider.defaultModel;
+    const model =
+      request.model && provider.models.includes(request.model)
+        ? request.model
+        : provider.defaultModel;
 
     try {
       return await provider.complete({
         ...request,
         model,
         maxTokens,
-        temperature
+        temperature,
       });
     } catch (error) {
-      const providerError = error instanceof Error ? error : new Error('Unknown provider error');
+      const providerError =
+        error instanceof Error ? error : new Error("Unknown provider error");
       logger.warn(
         {
           provider: provider.name,
           model,
-          error: providerError.message
+          error: providerError.message,
         },
-        'provider completion failed, trying fallback'
+        "provider completion failed, trying fallback",
       );
       lastError = providerError;
     }
   }
 
-  throw lastError || new Error('All providers failed');
+  throw lastError || new Error("All providers failed");
 }

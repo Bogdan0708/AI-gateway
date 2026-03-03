@@ -1,7 +1,11 @@
-import OpenAI from 'openai';
-import { CompletionRequest, CompletionResponse, ProviderConfig } from '../types';
+import OpenAI from "openai";
+import {
+  CompletionRequest,
+  CompletionResponse,
+  ProviderConfig,
+} from "../types";
 
-const MODELS = ['gpt-4o', 'gpt-4o-mini', 'gpt-5'] as const;
+const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5"] as const;
 const TIMEOUT_MS = 30_000;
 
 let client: OpenAI | null = null;
@@ -15,7 +19,11 @@ function getClient(): OpenAI {
 }
 
 export async function complete(
-  request: CompletionRequest & { model: string; maxTokens: number; temperature: number }
+  request: CompletionRequest & {
+    model: string;
+    maxTokens: number;
+    temperature: number;
+  },
 ): Promise<CompletionResponse> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -27,21 +35,21 @@ export async function complete(
         model: request.model,
         messages: request.messages,
         max_tokens: request.maxTokens,
-        temperature: request.temperature
+        temperature: request.temperature,
       },
-      { signal: controller.signal }
+      { signal: controller.signal },
     );
 
     return {
-      content: response.choices[0]?.message?.content || '',
-      provider: 'openai',
+      content: response.choices[0]?.message?.content || "",
+      provider: "openai",
       model: request.model,
       usage: {
         promptTokens: response.usage?.prompt_tokens || 0,
         completionTokens: response.usage?.completion_tokens || 0,
-        totalTokens: response.usage?.total_tokens || 0
+        totalTokens: response.usage?.total_tokens || 0,
       },
-      latencyMs: Date.now() - start
+      latencyMs: Date.now() - start,
     };
   } finally {
     clearTimeout(timeout);
@@ -49,9 +57,9 @@ export async function complete(
 }
 
 export const openaiProvider: ProviderConfig = {
-  name: 'openai',
+  name: "openai",
   enabled: Boolean(process.env.OPENAI_API_KEY),
-  defaultModel: 'gpt-4o-mini',
+  defaultModel: "gpt-4o-mini",
   models: [...MODELS],
-  complete
+  complete,
 };

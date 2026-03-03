@@ -1,7 +1,13 @@
-export type ProviderName = 'openai' | 'claude' | 'gemini' | 'xai' | 'groq' | 'perplexity';
+export type ProviderName =
+  | "openai"
+  | "claude"
+  | "gemini"
+  | "xai"
+  | "groq"
+  | "perplexity";
 
 export interface CompletionMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
@@ -37,6 +43,6 @@ export interface ProviderConfig {
       model: string;
       maxTokens: number;
       temperature: number;
-    }
+    },
   ) => Promise<CompletionResponse>;
 }
