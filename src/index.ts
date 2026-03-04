@@ -32,14 +32,14 @@ import { CompletionMessage } from "./types";
 const app = express();
 const port = Number(process.env.PORT || 8080);
 
-const defaultOrigins = [
+const defaultOrigins: (string | RegExp)[] = [
   "https://primaria.ro",
-  "https://*.primaria.ro",
+  /^https:\/\/[a-z0-9-]+\.primaria\.ro$/,
   "https://primaria-j3dqdqxnyq-lm.a.run.app",
   "https://api.mitchfromtransylvania.com",
   "https://mitchfromtransylvania.com",
   "https://eufunding.ro",
-  "https://*.eufunding.ro",
+  /^https:\/\/[a-z0-9-]+\.eufunding\.ro$/,
   "https://fondeu-platform-857599941951.europe-west2.run.app",
   "http://localhost:3000",
   "http://localhost:3006",

@@ -82,26 +82,18 @@ export async function complete(
   try {
     const result = await chat.sendMessage(prompt, {
       signal: controller.signal,
-      timeout: TIMEOUT_MS,
     });
     const content = result.response.text();
-
-    const promptTokens = Math.ceil(
-      request.messages.reduce(
-        (sum, message) => sum + message.content.length,
-        0,
-      ) / 4,
-    );
-    const completionTokens = Math.ceil(content.length / 4);
+    const usage = result.response.usageMetadata;
 
     return {
       content,
       provider: "gemini",
       model: request.model,
       usage: {
-        promptTokens,
-        completionTokens,
-        totalTokens: promptTokens + completionTokens,
+        promptTokens: usage?.promptTokenCount ?? 0,
+        completionTokens: usage?.candidatesTokenCount ?? 0,
+        totalTokens: usage?.totalTokenCount ?? 0,
       },
       latencyMs: Date.now() - start,
     };
