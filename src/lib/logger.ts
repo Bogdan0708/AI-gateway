@@ -1,6 +1,6 @@
 import pino from "pino";
 import pinoHttp from "pino-http";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 
 export const logger = pino({
   level: process.env.LOG_LEVEL || "info",
@@ -22,7 +22,7 @@ export const httpLogger = pinoHttp({
       return headerValue[0];
     }
 
-    return uuidv4();
+    return randomUUID();
   },
   customLogLevel: (_req, res, err) => {
     if (err || res.statusCode >= 500) {

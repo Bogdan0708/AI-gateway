@@ -19,7 +19,7 @@ import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { httpLogger, logger } from "./lib/logger";
 import { authMiddleware } from "./middleware/auth";
 import {
@@ -32,14 +32,14 @@ import { CompletionMessage } from "./types";
 const app = express();
 const port = Number(process.env.PORT || 8080);
 
-const defaultOrigins = [
+const defaultOrigins: (string | RegExp)[] = [
   "https://primaria.ro",
-  "https://*.primaria.ro",
+  /^https:\/\/[a-z0-9-]+\.primaria\.ro$/,
   "https://primaria-j3dqdqxnyq-lm.a.run.app",
   "https://api.mitchfromtransylvania.com",
   "https://mitchfromtransylvania.com",
   "https://eufunding.ro",
-  "https://*.eufunding.ro",
+  /^https:\/\/[a-z0-9-]+\.eufunding\.ro$/,
   "https://fondeu-platform-857599941951.europe-west2.run.app",
   "http://localhost:3000",
   "http://localhost:3006",
@@ -62,6 +62,7 @@ app.use(
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },
+    skip: (req) => req.path === "/health" || req.path === "/ping",
   }),
 );
 
@@ -134,7 +135,7 @@ app.post(
       );
 
       res.json({
-        id: `chatcmpl-${uuidv4()}`,
+        id: `chatcmpl-${randomUUID()}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: result.model,
@@ -254,17 +255,50 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-app.listen(port, () => {
-  const enabledProviders = listProviders()
-    .filter((provider) => provider.enabled)
-    .map((provider) => provider.id);
-  logger.info(
-    {
-      port,
-      enabledProviders,
-    },
-    "AI Gateway started",
-  );
-});
+// Only bind to a port when run directly (not imported by tests).
+// supertest creates its own ephemeral server from `app`.
+if (require.main === module) {
+  const server = app.listen(port, () => {
+    const enabledProviders = listProviders()
+      .filter((provider) => provider.enabled)
+      .map((provider) => provider.id);
+    logger.info(
+      {
+        port,
+        enabledProviders,
+      },
+      "AI Gateway started",
+    );
+  });
 
-export default app;
+  // Cloud Run sends SIGTERM, then SIGKILL after ~10s.
+  // Grace period: stop accepting new connections, drain in-flight requests.
+  const SHUTDOWN_TIMEOUT_MS = 8_000;
+
+  function shutdown(signal: string) {
+    logger.info({ signal }, "shutdown signal received, draining connections");
+    server.close(() => {
+      logger.info("all connections drained, exiting");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("shutdown timed out, forcing exit");
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "unhandled promise rejection");
+    shutdown("unhandledRejection");
+  });
+
+  process.on("uncaughtException", (err) => {
+    logger.error({ err }, "uncaught exception");
+    shutdown("uncaughtException");
+  });
+}
+
+export { app };

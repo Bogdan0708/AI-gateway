@@ -1,17 +1,12 @@
 import { NextFunction, Request, Response } from "express";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 const PUBLIC_PATHS = new Set(["/health", "/ping"]);
 
 function safeCompare(a: string, b: string): boolean {
-  const aBuf = Buffer.from(a);
-  const bBuf = Buffer.from(b);
-
-  if (aBuf.length !== bBuf.length) {
-    return false;
-  }
-
-  return timingSafeEqual(aBuf, bBuf);
+  const aHash = createHash("sha256").update(a).digest();
+  const bHash = createHash("sha256").update(b).digest();
+  return timingSafeEqual(aHash, bHash);
 }
 
 export function authMiddleware(
