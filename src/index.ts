@@ -255,46 +255,50 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-const server = app.listen(port, () => {
-  const enabledProviders = listProviders()
-    .filter((provider) => provider.enabled)
-    .map((provider) => provider.id);
-  logger.info(
-    {
-      port,
-      enabledProviders,
-    },
-    "AI Gateway started",
-  );
-});
-
-// Cloud Run sends SIGTERM, then SIGKILL after ~10s.
-// Grace period: stop accepting new connections, drain in-flight requests.
-const SHUTDOWN_TIMEOUT_MS = 8_000;
-
-function shutdown(signal: string) {
-  logger.info({ signal }, "shutdown signal received, draining connections");
-  server.close(() => {
-    logger.info("all connections drained, exiting");
-    process.exit(0);
+// Only bind to a port when run directly (not imported by tests).
+// supertest creates its own ephemeral server from `app`.
+if (require.main === module) {
+  const server = app.listen(port, () => {
+    const enabledProviders = listProviders()
+      .filter((provider) => provider.enabled)
+      .map((provider) => provider.id);
+    logger.info(
+      {
+        port,
+        enabledProviders,
+      },
+      "AI Gateway started",
+    );
   });
-  setTimeout(() => {
-    logger.error("shutdown timed out, forcing exit");
-    process.exit(1);
-  }, SHUTDOWN_TIMEOUT_MS).unref();
+
+  // Cloud Run sends SIGTERM, then SIGKILL after ~10s.
+  // Grace period: stop accepting new connections, drain in-flight requests.
+  const SHUTDOWN_TIMEOUT_MS = 8_000;
+
+  function shutdown(signal: string) {
+    logger.info({ signal }, "shutdown signal received, draining connections");
+    server.close(() => {
+      logger.info("all connections drained, exiting");
+      process.exit(0);
+    });
+    setTimeout(() => {
+      logger.error("shutdown timed out, forcing exit");
+      process.exit(1);
+    }, SHUTDOWN_TIMEOUT_MS).unref();
+  }
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
+
+  process.on("unhandledRejection", (reason) => {
+    logger.error({ err: reason }, "unhandled promise rejection");
+    shutdown("unhandledRejection");
+  });
+
+  process.on("uncaughtException", (err) => {
+    logger.error({ err }, "uncaught exception");
+    shutdown("uncaughtException");
+  });
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
-
-process.on("unhandledRejection", (reason) => {
-  logger.error({ err: reason }, "unhandled promise rejection");
-  shutdown("unhandledRejection");
-});
-
-process.on("uncaughtException", (err) => {
-  logger.error({ err }, "uncaught exception");
-  shutdown("uncaughtException");
-});
-
-export { app, server };
+export { app };

@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 
 // Mock providers BEFORE importing app — prevents real SDK client initialization
@@ -23,15 +23,11 @@ vi.mock("../providers", () => ({
 // Set env before importing app
 process.env.GATEWAY_MASTER_KEY = "test-key-for-unit-tests";
 
-import { app, server } from "../index";
+import { app } from "../index";
 import { complete } from "../providers";
 
 const mockedComplete = vi.mocked(complete);
 const AUTH = { Authorization: "Bearer test-key-for-unit-tests" };
-
-afterAll(() => {
-  server.close();
-});
 
 // --- Health & Ping ---
 
