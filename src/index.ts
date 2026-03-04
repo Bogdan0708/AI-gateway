@@ -62,6 +62,7 @@ app.use(
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },
+    skip: (req) => req.path === "/health" || req.path === "/ping",
   }),
 );
 
@@ -254,7 +255,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
   });
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   const enabledProviders = listProviders()
     .filter((provider) => provider.enabled)
     .map((provider) => provider.id);
@@ -267,4 +268,33 @@ app.listen(port, () => {
   );
 });
 
-export default app;
+// Cloud Run sends SIGTERM, then SIGKILL after ~10s.
+// Grace period: stop accepting new connections, drain in-flight requests.
+const SHUTDOWN_TIMEOUT_MS = 8_000;
+
+function shutdown(signal: string) {
+  logger.info({ signal }, "shutdown signal received, draining connections");
+  server.close(() => {
+    logger.info("all connections drained, exiting");
+    process.exit(0);
+  });
+  setTimeout(() => {
+    logger.error("shutdown timed out, forcing exit");
+    process.exit(1);
+  }, SHUTDOWN_TIMEOUT_MS).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "unhandled promise rejection");
+  shutdown("unhandledRejection");
+});
+
+process.on("uncaughtException", (err) => {
+  logger.error({ err }, "uncaught exception");
+  shutdown("uncaughtException");
+});
+
+export { app, server };
