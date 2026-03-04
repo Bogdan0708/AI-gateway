@@ -19,7 +19,7 @@ import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID } from "node:crypto";
 import { httpLogger, logger } from "./lib/logger";
 import { authMiddleware } from "./middleware/auth";
 import {
@@ -135,7 +135,7 @@ app.post(
       );
 
       res.json({
-        id: `chatcmpl-${uuidv4()}`,
+        id: `chatcmpl-${randomUUID()}`,
         object: "chat.completion",
         created: Math.floor(Date.now() / 1000),
         model: result.model,
