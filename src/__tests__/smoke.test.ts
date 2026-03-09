@@ -4,6 +4,22 @@ import request from "supertest";
 // Mock providers BEFORE importing app — prevents real SDK client initialization
 vi.mock("../providers", () => ({
   complete: vi.fn(),
+  embed: vi.fn(),
+  CompletionRoutingError: class CompletionRoutingError extends Error {
+    statusCode: number;
+    code: string;
+
+    constructor(
+      message: string,
+      statusCode = 400,
+      code = "routing.unsupported_provider",
+    ) {
+      super(message);
+      this.name = "CompletionRoutingError";
+      this.statusCode = statusCode;
+      this.code = code;
+    }
+  },
   listProviders: vi.fn(() => [
     {
       id: "openai",
@@ -24,9 +40,10 @@ vi.mock("../providers", () => ({
 process.env.GATEWAY_MASTER_KEY = "test-key-for-unit-tests";
 
 import { app } from "../index";
-import { complete } from "../providers";
+import { complete, embed, CompletionRoutingError } from "../providers";
 
 const mockedComplete = vi.mocked(complete);
+const mockedEmbed = vi.mocked(embed);
 const AUTH = { Authorization: "Bearer test-key-for-unit-tests" };
 
 // --- Health & Ping ---
@@ -39,6 +56,35 @@ describe("GET /health", () => {
     expect(res.body.service).toBe("ai-gateway");
     expect(res.body.providers).toBeInstanceOf(Array);
     expect(res.body.timestamp).toBeDefined();
+  });
+});
+
+// --- POST /v1/embeddings ---
+
+describe("POST /v1/embeddings", () => {
+  beforeEach(() => {
+    mockedEmbed.mockReset();
+    mockedEmbed.mockResolvedValue({
+      embeddings: [[0.1, 0.2, 0.3]],
+      provider: "openai",
+      model: "text-embedding-3-small",
+      usage: { promptTokens: 7, totalTokens: 7 },
+      latencyMs: 12,
+    });
+  });
+
+  it("returns embeddings on success", async () => {
+    const res = await request(app)
+      .post("/v1/embeddings")
+      .set(AUTH)
+      .send({ input: "hello world" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.object).toBe("list");
+    expect(res.body.data[0].object).toBe("embedding");
+    expect(res.body.model).toBe("text-embedding-3-small");
+    expect(res.body.provider).toBe("openai");
+    expect(res.body.usage.total_tokens).toBe(7);
   });
 });
 
@@ -124,6 +170,23 @@ describe("POST /v1/chat/completions", () => {
       .send({ messages: [{ role: "user", content: "hello" }] });
     expect(res.status).toBe(500);
     expect(res.body.error.type).toBe("ai_error");
+    expect(res.body.error.message).toBe("AI completion failed");
+    expect(res.body.error.code).toBe("ai.completion_failed");
+  });
+
+  it("returns 400 when routing rejects a provider or model", async () => {
+    mockedComplete.mockRejectedValue(
+      new CompletionRoutingError("Unsupported provider: bad-vendor"),
+    );
+
+    const res = await request(app)
+      .post("/v1/chat/completions")
+      .set(AUTH)
+      .send({ messages: [{ role: "user", content: "hello" }], provider: "bad-vendor" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.type).toBe("routing_error");
+    expect(res.body.error.code).toBe("routing.unsupported_provider");
   });
 });
 

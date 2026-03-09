@@ -35,8 +35,12 @@ The gateway requires the following environment variables to function:
 | Variable | Description |
 |----------|-------------|
 | `PORT` | Server port (default: 8080) |
+| `LOG_LEVEL` | Pino log level (default: `info`) |
 | `GATEWAY_MASTER_KEY` | Bearer token required for all authenticated routes |
 | `CORS_ORIGINS` | Comma-separated allowed origins |
+| `REQUIRE_TENANT_ID` | When `true`, requests must provide `x-tenant-id` or `tenant_id` |
+| `TENANT_POLICIES_JSON` | JSON object keyed by tenant id with `allowedProviders`, `allowedModels`, `maxTokens`, and `maxConcurrentRequests` |
+| `MAX_CONCURRENT_REQUESTS` | Global in-flight completion cap per instance (default: `50`) |
 | `OPENAI_API_KEY` | (Optional) Enables OpenAI provider |
 | `ANTHROPIC_API_KEY` | (Optional) Enables Claude provider |
 | `GOOGLE_API_KEY` | (Optional) Enables Gemini provider |
@@ -75,12 +79,24 @@ docker build -t ai-gateway .
 docker run -p 8080:8080 --env-file .env ai-gateway
 ```
 
+The container `HEALTHCHECK` now targets `GET /ready`, not `GET /health`, so local container health and deployment checks reflect provider readiness instead of simple process liveness.
+
 ## 📡 API Endpoints
 
 - `GET /health`: Service status and enabled providers.
+- `GET /ready`: Readiness signal with provider reachability and in-flight counts.
 - `GET /providers`: Detailed list of available models and configurations.
 - `POST /v1/chat/completions`: OpenAI-compatible chat completion.
 - `POST /complete`: Simplified completion endpoint.
+
+## 🔍 Operational Notes
+
+- `/health` is a cheap liveness endpoint. Use `/ready` for deployment or traffic-gating checks.
+- Error responses now include stable `error.code` values such as `routing.unsupported_provider`, `tenant.required`, and `concurrency.global_limit_reached` for alerting and log queries.
+- Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.
+- A deployment-ready environment template is available at [`docs/cloud-run.env.example`](/home/godja/Dev/ai-gateway/docs/cloud-run.env.example).
+- A production rollout checklist with suggested starting values is available at [`docs/cloud-run-rollout.md`](/home/godja/Dev/ai-gateway/docs/cloud-run-rollout.md).
+- A shared live validation guide for Taxes and EU-Funds is available at [`docs/consumer-validation.md`](/home/godja/Dev/ai-gateway/docs/consumer-validation.md).
 
 ---
 *Maintained by Bogdan — Part of the Mitch From Transylvania ecosystem.*

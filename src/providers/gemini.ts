@@ -1,4 +1,5 @@
 import { Content, GoogleGenerativeAI } from "@google/generative-ai";
+import { probeUrl } from "../lib/readiness";
 import {
   CompletionRequest,
   CompletionResponse,
@@ -107,5 +108,6 @@ export const geminiProvider: ProviderConfig = {
   enabled: Boolean(process.env.GOOGLE_API_KEY),
   defaultModel: "gemini-2.0-flash",
   models: [...MODELS],
+  checkReadiness: () => probeUrl("https://generativelanguage.googleapis.com"),
   complete,
 };

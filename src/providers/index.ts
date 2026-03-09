@@ -1,7 +1,10 @@
 import { logger } from "../lib/logger";
+import { ErrorCodes, type ErrorCode } from "../lib/error-codes";
 import {
   CompletionRequest,
   CompletionResponse,
+  EmbeddingRequest,
+  EmbeddingResponse,
   ProviderConfig,
   ProviderName,
 } from "../types";
@@ -34,24 +37,128 @@ export const providers = fallbackChain.map(
   (providerName) => providerRegistry[providerName],
 );
 
-function resolveProviderOrder(requestedProvider?: string): ProviderConfig[] {
+export class CompletionRoutingError extends Error {
+  public readonly code: ErrorCode;
+
+  constructor(
+    message: string,
+    public readonly statusCode: number = 400,
+    code: ErrorCode = ErrorCodes.routingUnsupportedProvider,
+  ) {
+    super(message);
+    this.name = "CompletionRoutingError";
+    this.code = code;
+  }
+}
+
+function sanitizeProviderError(error: Error): string {
+  if (error.name === "AbortError") {
+    return "provider request timed out";
+  }
+
+  return error.message.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+
+function normalizeRequestedProviderAndModel(input: {
+  provider?: string;
+  model?: string;
+}): {
+  provider?: string;
+  model?: string;
+} {
+  if (
+    input.provider &&
+    input.model &&
+    input.provider === input.model &&
+    providerRegistry[input.provider as ProviderName]
+  ) {
+    return {
+      provider: input.provider,
+      model: undefined,
+    };
+  }
+
+  return input;
+}
+
+function resolveProviderOrder(
+  requestedProvider?: string,
+  requestedModel?: string,
+  allowFallback = false,
+  allowedProviders?: ProviderName[],
+  allowedModels?: string[],
+): ProviderConfig[] {
   const enabledProviders = fallbackChain
     .map((providerName) => providerRegistry[providerName])
-    .filter((provider) => provider.enabled);
+    .filter((provider) => provider.enabled)
+    .filter(
+      (provider) =>
+        !allowedProviders || allowedProviders.includes(provider.name),
+    )
+    .filter(
+      (provider) =>
+        !allowedModels ||
+        allowedModels.some((allowedModel) => provider.models.includes(allowedModel)),
+    );
 
-  if (!requestedProvider) {
+  if (requestedProvider) {
+    const requested = providerRegistry[requestedProvider as ProviderName];
+    if (!requested) {
+      throw new CompletionRoutingError(
+        `Unsupported provider: ${requestedProvider}`,
+        400,
+        ErrorCodes.routingUnsupportedProvider,
+      );
+    }
+
+    if (!requested.enabled) {
+      throw new CompletionRoutingError(
+        `Requested provider is not enabled: ${requestedProvider}`,
+        503,
+        ErrorCodes.routingProviderDisabled,
+      );
+    }
+
+    if (requestedModel && !requested.models.includes(requestedModel)) {
+      throw new CompletionRoutingError(
+        `Model ${requestedModel} is not available for provider ${requestedProvider}`,
+        400,
+        ErrorCodes.routingUnsupportedModel,
+      );
+    }
+
+    if (!allowFallback) {
+      return [requested];
+    }
+
+    const fallbackProviders = requestedModel
+      ? enabledProviders.filter(
+          (provider) =>
+            provider.name !== requested.name &&
+            provider.models.includes(requestedModel),
+        )
+      : enabledProviders.filter((provider) => provider.name !== requested.name);
+
+    return [requested, ...fallbackProviders];
+  }
+
+  if (!requestedModel) {
     return enabledProviders;
   }
 
-  const requested = providerRegistry[requestedProvider as ProviderName];
-  if (!requested || !requested.enabled) {
-    return enabledProviders;
+  const matchingProviders = enabledProviders.filter((provider) =>
+    provider.models.includes(requestedModel),
+  );
+
+  if (matchingProviders.length === 0) {
+    throw new CompletionRoutingError(
+      `Unsupported model: ${requestedModel}`,
+      400,
+      ErrorCodes.routingUnsupportedModel,
+    );
   }
 
-  return [
-    requested,
-    ...enabledProviders.filter((provider) => provider.name !== requested.name),
-  ];
+  return allowFallback ? matchingProviders : [matchingProviders[0]];
 }
 
 export function listProviders(): Array<{
@@ -71,10 +178,63 @@ export function listProviders(): Array<{
   });
 }
 
+export async function checkProviderReadiness(): Promise<
+  Array<{
+    id: ProviderName;
+    enabled: boolean;
+    ready: boolean;
+    reason: string;
+  }>
+> {
+  const checks = await Promise.all(
+    fallbackChain.map(async (providerName) => {
+      const provider = providerRegistry[providerName];
+
+      if (!provider.enabled) {
+        return {
+          id: provider.name,
+          enabled: false,
+          ready: false,
+          reason: "provider not configured",
+        };
+      }
+
+      if (!provider.checkReadiness) {
+        return {
+          id: provider.name,
+          enabled: true,
+          ready: true,
+          reason: "no readiness probe configured",
+        };
+      }
+
+      const result = await provider.checkReadiness();
+      return {
+        id: provider.name,
+        enabled: true,
+        ready: result.ready,
+        reason: result.reason ?? "probe completed",
+      };
+    }),
+  );
+
+  return checks;
+}
+
 export async function complete(
   request: CompletionRequest,
 ): Promise<CompletionResponse> {
-  const providersInOrder = resolveProviderOrder(request.provider);
+  const normalized = normalizeRequestedProviderAndModel({
+    provider: request.provider,
+    model: request.model,
+  });
+  const providersInOrder = resolveProviderOrder(
+    normalized.provider,
+    normalized.model,
+    request.allowFallback ?? false,
+    request.allowedProviders,
+    request.allowedModels,
+  );
 
   if (providersInOrder.length === 0) {
     throw new Error("No AI providers configured");
@@ -87,9 +247,11 @@ export async function complete(
 
   for (const provider of providersInOrder) {
     const model =
-      request.model && provider.models.includes(request.model)
-        ? request.model
-        : provider.defaultModel;
+      normalized.model ??
+      request.allowedModels?.find((allowedModel) =>
+        provider.models.includes(allowedModel),
+      ) ??
+      provider.defaultModel;
 
     try {
       return await provider.complete({
@@ -97,6 +259,7 @@ export async function complete(
         model,
         maxTokens,
         temperature,
+        provider: normalized.provider,
       });
     } catch (error) {
       const providerError =
@@ -105,7 +268,7 @@ export async function complete(
         {
           provider: provider.name,
           model,
-          error: providerError.message,
+          error: sanitizeProviderError(providerError),
         },
         "provider completion failed, trying fallback",
       );
@@ -114,4 +277,88 @@ export async function complete(
   }
 
   throw lastError || new Error("All providers failed");
+}
+
+export async function embed(
+  request: EmbeddingRequest,
+): Promise<EmbeddingResponse> {
+  const normalized = normalizeRequestedProviderAndModel({
+    provider: request.provider,
+    model: request.model,
+  });
+
+  const enabledProviders = fallbackChain
+    .map((providerName) => providerRegistry[providerName])
+    .filter((provider) => provider.enabled && provider.embed);
+
+  let providersInOrder = enabledProviders;
+
+  if (normalized.provider) {
+    const requested = providerRegistry[normalized.provider as ProviderName];
+    if (!requested) {
+      throw new CompletionRoutingError(
+        `Unsupported provider: ${normalized.provider}`,
+        400,
+        ErrorCodes.routingUnsupportedProvider,
+      );
+    }
+
+    if (!requested.enabled || !requested.embed) {
+      throw new CompletionRoutingError(
+        `Requested provider does not support embeddings: ${normalized.provider}`,
+        503,
+        ErrorCodes.routingProviderDisabled,
+      );
+    }
+
+    providersInOrder = [requested];
+  }
+
+  if (providersInOrder.length === 0) {
+    throw new Error("No embedding providers configured");
+  }
+
+  let lastError: Error | null = null;
+
+  for (const provider of providersInOrder) {
+    const embeddingModels = provider.embeddingModels ?? [];
+    const model =
+      normalized.model && embeddingModels.includes(normalized.model)
+        ? normalized.model
+        : provider.defaultEmbeddingModel;
+
+    if (!model || !provider.embed) {
+      continue;
+    }
+
+    if (normalized.model && !embeddingModels.includes(normalized.model)) {
+      throw new CompletionRoutingError(
+        `Model ${normalized.model} is not available for embeddings on provider ${provider.name}`,
+        400,
+        ErrorCodes.routingUnsupportedModel,
+      );
+    }
+
+    try {
+      return await provider.embed({
+        ...request,
+        provider: normalized.provider,
+        model,
+      });
+    } catch (error) {
+      const providerError =
+        error instanceof Error ? error : new Error("Unknown provider error");
+      logger.warn(
+        {
+          provider: provider.name,
+          model,
+          error: sanitizeProviderError(providerError),
+        },
+        "provider embedding failed",
+      );
+      lastError = providerError;
+    }
+  }
+
+  throw lastError || new Error("All embedding providers failed");
 }

@@ -20,17 +20,41 @@ import express, { NextFunction, Request, Response } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { randomUUID } from "node:crypto";
+import {
+  ConcurrencyLimitError,
+  getInflightCounts,
+  withConcurrencyLimit,
+} from "./lib/concurrency";
+import { ErrorCodes } from "./lib/error-codes";
 import { httpLogger, logger } from "./lib/logger";
+import { getRequestErrorResponse } from "./lib/request-errors";
+import {
+  enforceTenantPolicy,
+  filterProvidersForTenant,
+  resolveTenantId,
+  TenantPolicyError,
+} from "./lib/tenant-policy";
 import { authMiddleware } from "./middleware/auth";
 import {
   validateChatCompletion,
+  validateEmbeddingRequest,
   validateSimpleCompletion,
 } from "./middleware/validate";
-import { complete, listProviders } from "./providers";
+import {
+  checkProviderReadiness,
+  complete,
+  CompletionRoutingError,
+  embed,
+  listProviders,
+} from "./providers";
 import { CompletionMessage } from "./types";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
+
+// Cloud Run sits behind Google-managed proxies/load balancers.
+// Trust the first proxy hop so req.ip and rate limiting use the client IP.
+app.set("trust proxy", 1);
 
 const defaultOrigins: (string | RegExp)[] = [
   "https://primaria.ro",
@@ -50,6 +74,31 @@ const corsOrigins =
     .map((origin) => origin.trim())
     .filter(Boolean) || defaultOrigins;
 
+function sanitizeProviderError(error: unknown): string {
+  if (error instanceof Error && error.name === "AbortError") {
+    return "provider request timed out";
+  }
+
+  if (error instanceof Error) {
+    return error.message.replace(/\s+/g, " ").trim().slice(0, 200);
+  }
+
+  return "AI completion failed";
+}
+
+function getHeaderTenantId(req: Request): string | undefined {
+  const headerValue = req.headers["x-tenant-id"];
+  if (typeof headerValue === "string" && headerValue.trim()) {
+    return headerValue.trim();
+  }
+
+  if (Array.isArray(headerValue) && headerValue.length > 0 && headerValue[0]) {
+    return headerValue[0].trim();
+  }
+
+  return undefined;
+}
+
 app.use(helmet());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
@@ -62,7 +111,8 @@ app.use(
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },
-    skip: (req) => req.path === "/health" || req.path === "/ping",
+    skip: (req) =>
+      req.path === "/health" || req.path === "/ping" || req.path === "/ready",
   }),
 );
 
@@ -84,10 +134,181 @@ app.get("/ping", (_req: Request, res: Response) => {
   res.send("pong");
 });
 
+app.get("/ready", async (_req: Request, res: Response) => {
+  try {
+    const providers = await checkProviderReadiness();
+    const enabledProviders = providers.filter((provider) => provider.enabled);
+    const masterKeyConfigured = Boolean(process.env.GATEWAY_MASTER_KEY);
+    const ready =
+      masterKeyConfigured &&
+      enabledProviders.length > 0 &&
+      enabledProviders.some((provider) => provider.ready);
+
+    res.status(ready ? 200 : 503).json({
+      status: ready ? "ready" : "not_ready",
+      service: "ai-gateway",
+      version: "3.0.0",
+      master_key_configured: masterKeyConfigured,
+      inflight: getInflightCounts(),
+      providers,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: "not_ready",
+      service: "ai-gateway",
+      version: "3.0.0",
+      error: sanitizeProviderError(error),
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
 app.get("/providers", (req: Request, res: Response) => {
   req.log.info("listing providers");
-  res.json({ providers: listProviders() });
+  try {
+    const tenantId = resolveTenantId(getHeaderTenantId(req), undefined);
+    enforceTenantPolicy({ tenantId });
+    const providers = filterProvidersForTenant({
+      tenantId,
+      providers: listProviders(),
+    });
+    res.json({ providers, tenant_id: tenantId });
+  } catch (error) {
+    if (error instanceof TenantPolicyError) {
+      res.status(error.statusCode).json({
+        error: {
+          message: error.message,
+          type: "tenant_policy_error",
+          code: error.code,
+        },
+      });
+      return;
+    }
+
+    throw error;
+  }
 });
+
+app.post(
+  "/v1/embeddings",
+  validateEmbeddingRequest,
+  async (req: Request, res: Response) => {
+    try {
+      const { input, model, provider, tenant_id } = req.body as {
+        input: string | string[];
+        model?: string;
+        provider?: string;
+        tenant_id?: string;
+      };
+
+      const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
+
+      const result = await withConcurrencyLimit(resolvedTenantId, () =>
+        embed({
+          ...enforceTenantPolicy({
+            tenantId: resolvedTenantId,
+            provider,
+            model,
+          }),
+          input,
+          provider,
+          model,
+          tenantId: resolvedTenantId,
+        }),
+      );
+
+      req.log.info(
+        {
+          tenantId: resolvedTenantId,
+          provider: result.provider,
+          model: result.model,
+          totalTokens: result.usage.totalTokens,
+          latencyMs: result.latencyMs,
+        },
+        "embedding request succeeded",
+      );
+
+      res.json({
+        object: "list",
+        data: result.embeddings.map((embedding, index) => ({
+          object: "embedding",
+          index,
+          embedding,
+        })),
+        model: result.model,
+        provider: result.provider,
+        usage: {
+          prompt_tokens: result.usage.promptTokens,
+          total_tokens: result.usage.totalTokens,
+        },
+        latency_ms: result.latencyMs,
+        tenant_id: resolvedTenantId,
+      });
+    } catch (error) {
+      if (error instanceof CompletionRoutingError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "embedding request routing rejected",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "routing_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof TenantPolicyError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "embedding request blocked by tenant policy",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "tenant_policy_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof ConcurrencyLimitError) {
+        req.log.warn(
+          { code: error.code, error: error.message, inflight: getInflightCounts() },
+          "embedding request rejected by concurrency limit",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "concurrency_limit_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      req.log.error(
+        {
+          code: ErrorCodes.aiCompletionFailed,
+          error: sanitizeProviderError(error),
+        },
+        "embedding request failed",
+      );
+
+      res.status(500).json({
+        error: {
+          message: "AI completion failed",
+          type: "ai_error",
+          code: ErrorCodes.aiCompletionFailed,
+        },
+      });
+    }
+  },
+);
 
 app.post(
   "/v1/chat/completions",
@@ -103,6 +324,8 @@ app.post(
         temperature,
         tenant_id,
         task_type,
+        allow_fallback,
+        allowFallback,
       } = req.body as {
         messages: CompletionMessage[];
         provider?: string;
@@ -112,20 +335,34 @@ app.post(
         temperature?: number;
         tenant_id?: string;
         task_type?: string;
+        allow_fallback?: boolean;
+        allowFallback?: boolean;
       };
+      const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
-      const result = await complete({
-        messages,
-        provider,
-        model,
-        maxTokens: max_tokens ?? maxTokens,
-        temperature,
-        tenantId: tenant_id,
-        taskType: task_type,
-      });
+      const result = await withConcurrencyLimit(resolvedTenantId, () =>
+        complete({
+          ...enforceTenantPolicy({
+            tenantId: resolvedTenantId,
+            provider,
+            model,
+            maxTokens: max_tokens ?? maxTokens,
+          }),
+          messages,
+          provider,
+          model,
+          maxTokens: max_tokens ?? maxTokens,
+          temperature,
+          tenantId: resolvedTenantId,
+          taskType: task_type,
+          allowFallback: allow_fallback ?? allowFallback,
+        }),
+      );
 
       req.log.info(
         {
+          tenantId: resolvedTenantId,
+          taskType: task_type,
           provider: result.provider,
           model: result.model,
           totalTokens: result.usage.totalTokens,
@@ -156,16 +393,67 @@ app.post(
           total_tokens: result.usage.totalTokens,
         },
         latency_ms: result.latencyMs,
+        tenant_id: resolvedTenantId,
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "AI completion failed";
-      req.log.error({ error: message }, "chat completion failed");
+      if (error instanceof CompletionRoutingError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "chat completion routing rejected",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "routing_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof TenantPolicyError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "chat completion blocked by tenant policy",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "tenant_policy_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof ConcurrencyLimitError) {
+        req.log.warn(
+          { code: error.code, error: error.message, inflight: getInflightCounts() },
+          "chat completion rejected by concurrency limit",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "concurrency_limit_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      req.log.error(
+        {
+          code: ErrorCodes.aiCompletionFailed,
+          error: sanitizeProviderError(error),
+        },
+        "chat completion failed",
+      );
 
       res.status(500).json({
         error: {
-          message,
+          message: "AI completion failed",
           type: "ai_error",
+          code: ErrorCodes.aiCompletionFailed,
         },
       });
     }
@@ -185,6 +473,9 @@ app.post(
         max_tokens,
         maxTokens,
         temperature,
+        tenant_id,
+        allow_fallback,
+        allowFallback,
       } = req.body as {
         prompt: string;
         system?: string;
@@ -193,7 +484,11 @@ app.post(
         max_tokens?: number;
         maxTokens?: number;
         temperature?: number;
+        tenant_id?: string;
+        allow_fallback?: boolean;
+        allowFallback?: boolean;
       };
+      const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
       const messages: CompletionMessage[] = [];
       if (system) {
@@ -201,16 +496,27 @@ app.post(
       }
       messages.push({ role: "user", content: prompt });
 
-      const result = await complete({
-        messages,
-        provider,
-        model,
-        maxTokens: max_tokens ?? maxTokens,
-        temperature,
-      });
+      const result = await withConcurrencyLimit(resolvedTenantId, () =>
+        complete({
+          ...enforceTenantPolicy({
+            tenantId: resolvedTenantId,
+            provider,
+            model,
+            maxTokens: max_tokens ?? maxTokens,
+          }),
+          messages,
+          provider,
+          model,
+          maxTokens: max_tokens ?? maxTokens,
+          temperature,
+          tenantId: resolvedTenantId,
+          allowFallback: allow_fallback ?? allowFallback,
+        }),
+      );
 
       req.log.info(
         {
+          tenantId: resolvedTenantId,
           provider: result.provider,
           model: result.model,
           totalTokens: result.usage.totalTokens,
@@ -225,16 +531,67 @@ app.post(
         model: result.model,
         usage: result.usage,
         latency_ms: result.latencyMs,
+        tenant_id: resolvedTenantId,
       });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "AI completion failed";
-      req.log.error({ error: message }, "simple completion failed");
+      if (error instanceof CompletionRoutingError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "simple completion routing rejected",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "routing_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof TenantPolicyError) {
+        req.log.warn(
+          { code: error.code, error: error.message },
+          "simple completion blocked by tenant policy",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "tenant_policy_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      if (error instanceof ConcurrencyLimitError) {
+        req.log.warn(
+          { code: error.code, error: error.message, inflight: getInflightCounts() },
+          "simple completion rejected by concurrency limit",
+        );
+        res.status(error.statusCode).json({
+          error: {
+            message: error.message,
+            type: "concurrency_limit_error",
+            code: error.code,
+          },
+        });
+        return;
+      }
+
+      req.log.error(
+        {
+          code: ErrorCodes.aiCompletionFailed,
+          error: sanitizeProviderError(error),
+        },
+        "simple completion failed",
+      );
 
       res.status(500).json({
         error: {
-          message,
+          message: "AI completion failed",
           type: "ai_error",
+          code: ErrorCodes.aiCompletionFailed,
         },
       });
     }
@@ -242,6 +599,22 @@ app.post(
 );
 
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  const requestError = getRequestErrorResponse(err);
+  if (requestError) {
+    req.log.warn(
+      { code: requestError.code, error: requestError.message },
+      "request parsing failed",
+    );
+    res.status(requestError.statusCode).json({
+      error: {
+        message: requestError.message,
+        type: "request_error",
+        code: requestError.code,
+      },
+    });
+    return;
+  }
+
   req.log.error({ err }, "unhandled server error");
 
   res.status(500).json({
@@ -251,6 +624,7 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
           ? "Internal server error"
           : err.message,
       type: "server_error",
+      code: ErrorCodes.serverInternal,
     },
   });
 });

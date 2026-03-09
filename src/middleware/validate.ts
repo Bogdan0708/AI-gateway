@@ -42,6 +42,9 @@ const chatCompletionSchema = z
       .min(MIN_TOKENS_LIMIT, tokensErrorMsg)
       .max(MAX_TOKENS_LIMIT, tokensErrorMsg)
       .optional(),
+    tenant_id: z.string().min(1, "tenant_id cannot be empty").optional(),
+    allow_fallback: z.boolean().optional(),
+    allowFallback: z.boolean().optional(),
   })
   .passthrough();
 
@@ -78,6 +81,36 @@ const simpleCompletionSchema = z
       .min(MIN_TOKENS_LIMIT, tokensErrorMsg)
       .max(MAX_TOKENS_LIMIT, tokensErrorMsg)
       .optional(),
+    tenant_id: z.string().min(1, "tenant_id cannot be empty").optional(),
+    allow_fallback: z.boolean().optional(),
+    allowFallback: z.boolean().optional(),
+  })
+  .passthrough();
+
+const embeddingSchema = z
+  .object({
+    input: z.union([
+      z
+        .string()
+        .min(1, "input is required")
+        .max(
+          MAX_CONTENT_LENGTH,
+          `input must be at most ${MAX_CONTENT_LENGTH} characters`,
+        ),
+      z
+        .array(
+          z
+            .string()
+            .min(1, "input items cannot be empty")
+            .max(
+              MAX_CONTENT_LENGTH,
+              `input items must be at most ${MAX_CONTENT_LENGTH} characters`,
+            ),
+        )
+        .min(1, "input array cannot be empty")
+        .max(MAX_MESSAGES, `input array must contain at most ${MAX_MESSAGES} items`),
+    ]),
+    tenant_id: z.string().min(1, "tenant_id cannot be empty").optional(),
   })
   .passthrough();
 
@@ -111,6 +144,25 @@ export function validateSimpleCompletion(
   }
 
   const result = simpleCompletionSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: result.error.issues[0].message });
+    return;
+  }
+
+  next();
+}
+
+export function validateEmbeddingRequest(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): void {
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+    res.status(400).json({ error: "request body must be an object" });
+    return;
+  }
+
+  const result = embeddingSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: result.error.issues[0].message });
     return;

@@ -3,6 +3,7 @@ import {
   CompletionResponse,
   ProviderConfig,
 } from "../types";
+import { probeUrl } from "../lib/readiness";
 
 const MODELS = ["sonar", "sonar-pro", "sonar-reasoning"] as const;
 const TIMEOUT_MS = 30_000;
@@ -44,8 +45,7 @@ export async function complete(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Perplexity API error ${response.status}: ${errorText}`);
+      throw new Error(`Perplexity API request failed with status ${response.status}`);
     }
 
     const data = (await response.json()) as PerplexityResponse;
@@ -71,5 +71,6 @@ export const perplexityProvider: ProviderConfig = {
   enabled: Boolean(process.env.PERPLEXITY_API_KEY),
   defaultModel: "sonar",
   models: [...MODELS],
+  checkReadiness: () => probeUrl("https://api.perplexity.ai/chat/completions"),
   complete,
 };

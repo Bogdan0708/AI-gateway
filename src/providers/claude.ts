@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { probeUrl } from "../lib/readiness";
 import {
   CompletionRequest,
   CompletionResponse,
@@ -90,5 +91,6 @@ export const claudeProvider: ProviderConfig = {
   enabled: Boolean(process.env.ANTHROPIC_API_KEY),
   defaultModel: "claude-sonnet-4-20250514",
   models: [...MODELS],
+  checkReadiness: () => probeUrl("https://api.anthropic.com"),
   complete,
 };
