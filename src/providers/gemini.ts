@@ -11,7 +11,7 @@ const MODELS = [
   "gemini-2.5-flash",
   "gemini-1.5-pro-latest",
 ] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 let client: GoogleGenerativeAI | null = null;
 

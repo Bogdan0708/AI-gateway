@@ -10,7 +10,7 @@ import {
 
 const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5"] as const;
 const EMBEDDING_MODELS = ["text-embedding-3-small", "text-embedding-3-large"] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 let client: OpenAI | null = null;
 

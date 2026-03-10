@@ -5,6 +5,7 @@ interface TenantPolicyConfig {
   allowedProviders?: ProviderName[];
   allowedModels?: string[];
   maxTokens?: number;
+  maxConcurrentRequests?: number;
 }
 
 interface ParsedTenantPolicyConfig {
@@ -51,6 +52,7 @@ function parsePolicies(value: string | undefined): Record<string, TenantPolicyCo
       allowedProviders?: unknown;
       allowedModels?: unknown;
       maxTokens?: unknown;
+      maxConcurrentRequests?: unknown;
     };
 
     policies[tenantId] = {
@@ -68,23 +70,61 @@ function parsePolicies(value: string | undefined): Record<string, TenantPolicyCo
         typeof policy.maxTokens === "number" && Number.isInteger(policy.maxTokens)
           ? policy.maxTokens
           : undefined,
+      maxConcurrentRequests:
+        typeof policy.maxConcurrentRequests === "number" &&
+        Number.isInteger(policy.maxConcurrentRequests)
+          ? policy.maxConcurrentRequests
+          : undefined,
     };
   }
 
   return policies;
 }
 
+let cachedConfig:
+  | {
+      requireTenantIdEnv: string | undefined;
+      policiesEnv: string | undefined;
+      config: ParsedTenantPolicyConfig;
+    }
+  | undefined;
+
 export function loadTenantPolicyConfig(): ParsedTenantPolicyConfig {
-  return {
-    requireTenantId: parseRequireTenantId(process.env.REQUIRE_TENANT_ID),
-    policies: parsePolicies(process.env.TENANT_POLICIES_JSON),
+  const requireTenantIdEnv = process.env.REQUIRE_TENANT_ID;
+  const policiesEnv = process.env.TENANT_POLICIES_JSON;
+
+  if (
+    cachedConfig &&
+    cachedConfig.requireTenantIdEnv === requireTenantIdEnv &&
+    cachedConfig.policiesEnv === policiesEnv
+  ) {
+    return cachedConfig.config;
+  }
+
+  const config = {
+    requireTenantId: parseRequireTenantId(requireTenantIdEnv),
+    policies: parsePolicies(policiesEnv),
   };
+
+  cachedConfig = {
+    requireTenantIdEnv,
+    policiesEnv,
+    config,
+  };
+
+  return config;
+}
+
+export function resetTenantPolicyConfigCache(): void {
+  cachedConfig = undefined;
 }
 
 export function resolveTenantId(
   headerTenantId: string | undefined,
   bodyTenantId: string | undefined,
 ): string | undefined {
+  const tenantId = headerTenantId ?? bodyTenantId;
+
   if (headerTenantId && bodyTenantId && headerTenantId !== bodyTenantId) {
     throw new TenantPolicyError(
       "Tenant ID mismatch between x-tenant-id header and tenant_id body field",
@@ -93,7 +133,19 @@ export function resolveTenantId(
     );
   }
 
-  return headerTenantId ?? bodyTenantId;
+  if (!tenantId) {
+    return undefined;
+  }
+
+  if (tenantId.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(tenantId)) {
+    throw new TenantPolicyError(
+      "Tenant ID format is invalid",
+      400,
+      ErrorCodes.tenantMismatch,
+    );
+  }
+
+  return tenantId;
 }
 
 export function enforceTenantPolicy(input: {

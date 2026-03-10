@@ -1,0 +1,74 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
+  SERVICE: ai-gateway
+  IMAGE: ${{ secrets.GCP_REGION || 'europe-west1' }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ai-gateway/ai-gateway
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        run: |
+          docker build -t "$IMAGE:$GITHUB_SHA" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image "$IMAGE:$GITHUB_SHA" \
+            --region "$REGION" \
+            --platform managed \
+            --no-traffic \
+            --tag "sha-${GITHUB_SHA::7}"
+
+      - name: Smoke-test canary revision
+        run: |
+          CANARY_URL=$(gcloud run services describe "$SERVICE" \
+            --region "$REGION" \
+            --format='value(status.traffic[tag=sha-'"${GITHUB_SHA::7}"'].url)')
+          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' "$CANARY_URL/health" || true)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Canary health check failed (HTTP $STATUS)"
+            exit 1
+          fi
+          echo "Canary healthy at $CANARY_URL"
+
+      - name: Promote canary to 100% traffic
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --region "$REGION" \
+            --to-revisions=LATEST=100

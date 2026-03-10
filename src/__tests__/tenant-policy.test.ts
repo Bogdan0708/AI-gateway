@@ -3,6 +3,7 @@ import {
   enforceTenantPolicy,
   filterProvidersForTenant,
   loadTenantPolicyConfig,
+  resetTenantPolicyConfigCache,
   resolveTenantId,
   TenantPolicyError,
 } from "../lib/tenant-policy";
@@ -22,6 +23,8 @@ afterEach(() => {
   } else {
     process.env.TENANT_POLICIES_JSON = originalPolicies;
   }
+
+  resetTenantPolicyConfigCache();
 });
 
 describe("tenant policy", () => {

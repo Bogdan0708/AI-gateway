@@ -13,6 +13,7 @@ export const ErrorCodes = {
   requestBodyTooLarge: "request.body_too_large",
   requestInvalidJson: "request.invalid_json",
   aiCompletionFailed: "ai.completion_failed",
+  aiEmbeddingFailed: "ai.embedding_failed",
   serverInternal: "server.internal_error",
 } as const;
 

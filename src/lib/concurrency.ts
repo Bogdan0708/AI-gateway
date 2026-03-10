@@ -1,4 +1,5 @@
 import { ErrorCodes, type ErrorCode } from "./error-codes";
+import { loadTenantPolicyConfig } from "./tenant-policy";
 
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 50;
 
@@ -42,12 +43,10 @@ function getTenantLimit(tenantId?: string): number | undefined {
     return undefined;
   }
 
-  const rawConfig = process.env.TENANT_POLICIES_JSON;
-  if (!rawConfig) {
-    return undefined;
-  }
-
-  const parsed = JSON.parse(rawConfig) as Record<string, TenantConcurrencyConfig>;
+  const parsed = loadTenantPolicyConfig().policies as Record<
+    string,
+    TenantConcurrencyConfig
+  >;
   const limit = parsed?.[tenantId]?.maxConcurrentRequests;
   return Number.isInteger(limit) && limit && limit > 0 ? limit : undefined;
 }
@@ -57,6 +56,11 @@ export function getInflightCounts() {
     global: inflight.global,
     tenants: Object.fromEntries(inflight.tenants.entries()),
   };
+}
+
+export function resetInflightCounts(): void {
+  inflight.global = 0;
+  inflight.tenants.clear();
 }
 
 export async function withConcurrencyLimit<T>(

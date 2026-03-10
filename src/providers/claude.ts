@@ -11,7 +11,7 @@ const MODELS = [
   "claude-3-5-sonnet-20241022",
   "claude-3-haiku-20240307",
 ] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 let client: Anthropic | null = null;
 
@@ -91,6 +91,6 @@ export const claudeProvider: ProviderConfig = {
   enabled: Boolean(process.env.ANTHROPIC_API_KEY),
   defaultModel: "claude-sonnet-4-20250514",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://api.anthropic.com"),
+  checkReadiness: () => probeUrl("https://api.anthropic.com/v1/messages"),
   complete,
 };

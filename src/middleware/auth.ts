@@ -9,6 +9,18 @@ function safeCompare(a: string, b: string): boolean {
   return timingSafeEqual(aHash, bHash);
 }
 
+export function isAuthorizedRequest(req: Request): boolean {
+  const masterKey = process.env.GATEWAY_MASTER_KEY;
+  const authHeader = req.headers.authorization;
+
+  if (!masterKey || !authHeader || !authHeader.startsWith("Bearer ")) {
+    return false;
+  }
+
+  const token = authHeader.slice(7).trim();
+  return Boolean(token) && safeCompare(token, masterKey);
+}
+
 export function authMiddleware(
   req: Request,
   res: Response,
@@ -19,16 +31,7 @@ export function authMiddleware(
     return;
   }
 
-  const masterKey = process.env.GATEWAY_MASTER_KEY;
-  const authHeader = req.headers.authorization;
-
-  if (!masterKey || !authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Unauthorized" });
-    return;
-  }
-
-  const token = authHeader.slice(7).trim();
-  if (!token || !safeCompare(token, masterKey)) {
+  if (!isAuthorizedRequest(req)) {
     res.status(401).json({ error: "Unauthorized" });
     return;
   }

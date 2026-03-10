@@ -15,8 +15,11 @@ export async function probeUrl(url: string): Promise<{
     });
 
     return {
-      ready: true,
-      reason: `reachable (${response.status})`,
+      ready: response.status < 500,
+      reason:
+        response.status < 500
+          ? `reachable (${response.status})`
+          : `upstream error (${response.status})`,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {

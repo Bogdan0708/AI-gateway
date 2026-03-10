@@ -11,7 +11,7 @@ const MODELS = [
   "llama-3.1-8b-instant",
   "mixtral-8x7b-32768",
 ] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 let client: Groq | null = null;
 

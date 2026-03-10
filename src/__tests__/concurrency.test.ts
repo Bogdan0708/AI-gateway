@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   ConcurrencyLimitError,
   getInflightCounts,
+  resetInflightCounts,
   withConcurrencyLimit,
 } from "../lib/concurrency";
+import { resetTenantPolicyConfigCache } from "../lib/tenant-policy";
 
 const originalGlobalLimit = process.env.MAX_CONCURRENT_REQUESTS;
 const originalTenantPolicies = process.env.TENANT_POLICIES_JSON;
@@ -20,6 +22,9 @@ afterEach(() => {
   } else {
     process.env.TENANT_POLICIES_JSON = originalTenantPolicies;
   }
+
+  resetInflightCounts();
+  resetTenantPolicyConfigCache();
 });
 
 describe("concurrency controls", () => {

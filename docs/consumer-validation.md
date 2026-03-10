@@ -20,6 +20,16 @@ curl -sS "$GATEWAY_URL/ready" | jq
 
 Expected:
 - `status: "ready"`
+- public response is intentionally minimal
+
+For detailed diagnostics:
+
+```bash
+curl -sS "$GATEWAY_URL/ready" \
+  -H "Authorization: Bearer $GATEWAY_KEY" | jq
+```
+
+Expected:
 - `master_key_configured: true`
 - at least one enabled provider with `ready: true`
 

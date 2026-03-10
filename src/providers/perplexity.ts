@@ -6,7 +6,7 @@ import {
 import { probeUrl } from "../lib/readiness";
 
 const MODELS = ["sonar", "sonar-pro", "sonar-reasoning"] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 interface PerplexityResponse {
   choices?: Array<{ message?: { content?: string } }>;

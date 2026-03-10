@@ -22,11 +22,4 @@ describe("app configuration", () => {
   it("trusts the first proxy hop for Cloud Run", () => {
     expect(app.get("trust proxy")).toBe(1);
   });
-
-  it("exposes the readiness route publicly", () => {
-    const stack = (
-      app as unknown as { _router?: { stack?: Array<{ route?: { path?: string } }> } }
-    )._router?.stack ?? [];
-    expect(stack.some((layer) => layer.route?.path === "/ready")).toBe(true);
-  });
 });

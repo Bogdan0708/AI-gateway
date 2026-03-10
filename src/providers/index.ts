@@ -1,5 +1,6 @@
 import { logger } from "../lib/logger";
 import { ErrorCodes, type ErrorCode } from "../lib/error-codes";
+import { sanitizeProviderError } from "../lib/provider-errors";
 import {
   CompletionRequest,
   CompletionResponse,
@@ -49,14 +50,6 @@ export class CompletionRoutingError extends Error {
     this.name = "CompletionRoutingError";
     this.code = code;
   }
-}
-
-function sanitizeProviderError(error: Error): string {
-  if (error.name === "AbortError") {
-    return "provider request timed out";
-  }
-
-  return error.message.replace(/\s+/g, " ").trim().slice(0, 200);
 }
 
 function normalizeRequestedProviderAndModel(input: {

@@ -79,7 +79,7 @@ docker build -t ai-gateway .
 docker run -p 8080:8080 --env-file .env ai-gateway
 ```
 
-The container `HEALTHCHECK` now targets `GET /ready`, not `GET /health`, so local container health and deployment checks reflect provider readiness instead of simple process liveness.
+The container `HEALTHCHECK` targets `GET /health` for cheap liveness. Use `GET /ready` separately for authenticated readiness diagnostics.
 
 ## 📡 API Endpoints
 
@@ -91,7 +91,7 @@ The container `HEALTHCHECK` now targets `GET /ready`, not `GET /health`, so loca
 
 ## 🔍 Operational Notes
 
-- `/health` is a cheap liveness endpoint. Use `/ready` for deployment or traffic-gating checks.
+- `/health` is a cheap liveness endpoint. `/ready` is a public minimal readiness signal; authenticated callers get detailed provider and in-flight diagnostics.
 - Error responses now include stable `error.code` values such as `routing.unsupported_provider`, `tenant.required`, and `concurrency.global_limit_reached` for alerting and log queries.
 - Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.
 - A deployment-ready environment template is available at [`docs/cloud-run.env.example`](/home/godja/Dev/ai-gateway/docs/cloud-run.env.example).

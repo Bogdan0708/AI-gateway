@@ -7,7 +7,7 @@ import {
 } from "../types";
 
 const MODELS = ["grok-3", "grok-3-mini", "grok-2"] as const;
-const TIMEOUT_MS = 30_000;
+const TIMEOUT_MS = 15_000;
 
 let client: OpenAI | null = null;
 
