@@ -12,7 +12,8 @@ env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
   SERVICE: ai-gateway
-  IMAGE: ${{ secrets.GCP_REGION || 'europe-west1' }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ai-gateway/ai-gateway
+  IMAGE: ${{ vars.GCP_REGION || 'europe-west1' }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ai-gateway/ai-gateway
+  GATEWAY_MASTER_KEY: ${{ secrets.GATEWAY_MASTER_KEY }}
 
 jobs:
   ci:
@@ -60,9 +61,12 @@ jobs:
           CANARY_URL=$(gcloud run services describe "$SERVICE" \
             --region "$REGION" \
             --format='value(status.traffic[tag=sha-'"${GITHUB_SHA::7}"'].url)')
-          STATUS=$(curl -sf -o /dev/null -w '%{http_code}' "$CANARY_URL/health" || true)
-          if [ "$STATUS" != "200" ]; then
-            echo "::error::Canary health check failed (HTTP $STATUS)"
+          BODY=$(curl -fsS "$CANARY_URL/ready" \
+            -H "Authorization: Bearer $GATEWAY_MASTER_KEY")
+          STATUS=$(printf '%s' "$BODY" | grep -o '"status":"[^"]*"' | head -n1 | cut -d: -f2 | tr -d '"')
+          if [ "$STATUS" != "ready" ]; then
+            echo "::error::Canary readiness check failed"
+            printf '%s\n' "$BODY"
             exit 1
           fi
           echo "Canary healthy at $CANARY_URL"

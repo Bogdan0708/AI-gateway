@@ -18,7 +18,7 @@ If Cloud Run container concurrency is set above `20`, keep `MAX_CONCURRENT_REQUE
 
 1. Deploy the current code with `/ready` enabled and `REQUIRE_TENANT_ID=false`.
 2. Set `MAX_CONCURRENT_REQUESTS` and a minimal `TENANT_POLICIES_JSON` for known tenants.
-3. Verify `/ready` returns `200` and includes at least one `ready: true` provider.
+3. Verify authenticated `/ready` returns `200` and includes at least one `ready: true` provider.
 4. Confirm logs contain stable `error.code` values for rejected traffic.
 5. Watch Cloud Run request latency, 5xx rate, and saturation during peak traffic.
 6. After clients consistently send tenant identity, switch `REQUIRE_TENANT_ID=true`.
@@ -29,14 +29,14 @@ If Cloud Run container concurrency is set above `20`, keep `MAX_CONCURRENT_REQUE
 - `npx tsc --noEmit`
 - `npm run build`
 - Confirm `GATEWAY_MASTER_KEY` and provider keys are sourced from Secret Manager or equivalent secure env injection.
-- Confirm the deployed container health check or external monitor uses `GET /ready`, not `GET /health`.
+- Confirm deployment or traffic-gating checks use authenticated `GET /ready`. Keep container health checks on `GET /health`.
 
 ## Smoke Checks After Deploy
 
 - `GET /health` returns `200`
-- `GET /ready` returns `200`
-- `GET /ready` shows `master_key_configured: true`
-- `GET /ready` shows realistic `inflight` counts
+- Authenticated `GET /ready` returns `200`
+- Authenticated `GET /ready` shows `master_key_configured: true`
+- Authenticated `GET /ready` shows realistic `inflight` counts
 - Authenticated `GET /providers` returns tenant-filtered providers when `x-tenant-id` is present
 - Invalid provider/model requests return stable `error.code` values
 

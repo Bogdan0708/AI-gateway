@@ -26,7 +26,19 @@ describe("probeUrl", () => {
 
     await expect(probeUrl("https://example.com")).resolves.toEqual({
       ready: false,
-      reason: "upstream error (503)",
+      reason: "unexpected status (503)",
+    });
+  });
+
+  it("treats 4xx as not ready", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 401 })),
+    );
+
+    await expect(probeUrl("https://example.com")).resolves.toEqual({
+      ready: false,
+      reason: "unexpected status (401)",
     });
   });
 });

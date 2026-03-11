@@ -1,5 +1,15 @@
+import { z } from "zod";
 import { ProviderName } from "../types";
 import { ErrorCodes, type ErrorCode } from "./error-codes";
+
+const tenantPolicySchema = z.object({
+  allowedProviders: z.array(z.string()).optional(),
+  allowedModels: z.array(z.string()).optional(),
+  maxTokens: z.number().int().positive().optional(),
+  maxConcurrentRequests: z.number().int().positive().optional(),
+});
+
+const policiesSchema = z.record(z.string(), tenantPolicySchema);
 
 interface TenantPolicyConfig {
   allowedProviders?: ProviderName[];
@@ -36,49 +46,25 @@ function parsePolicies(value: string | undefined): Record<string, TenantPolicyCo
     return {};
   }
 
-  const parsed = JSON.parse(value) as unknown;
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("TENANT_POLICIES_JSON must be a JSON object keyed by tenant id");
-  }
-
-  const policies: Record<string, TenantPolicyConfig> = {};
-
-  for (const [tenantId, rawPolicy] of Object.entries(parsed)) {
-    if (!rawPolicy || typeof rawPolicy !== "object" || Array.isArray(rawPolicy)) {
-      throw new Error(`Invalid tenant policy for ${tenantId}`);
+  try {
+    const parsed = JSON.parse(value);
+    const validated = policiesSchema.parse(parsed);
+    
+    // Type cast string providers to ProviderName after validation
+    const policies: Record<string, TenantPolicyConfig> = {};
+    for (const [tenantId, policy] of Object.entries(validated)) {
+      policies[tenantId] = {
+        ...policy,
+        allowedProviders: policy.allowedProviders as ProviderName[] | undefined,
+      };
     }
-
-    const policy = rawPolicy as {
-      allowedProviders?: unknown;
-      allowedModels?: unknown;
-      maxTokens?: unknown;
-      maxConcurrentRequests?: unknown;
-    };
-
-    policies[tenantId] = {
-      allowedProviders: Array.isArray(policy.allowedProviders)
-        ? (policy.allowedProviders.filter(
-            (provider): provider is ProviderName => typeof provider === "string",
-          ) as ProviderName[])
-        : undefined,
-      allowedModels: Array.isArray(policy.allowedModels)
-        ? policy.allowedModels.filter(
-            (model): model is string => typeof model === "string" && model.length > 0,
-          )
-        : undefined,
-      maxTokens:
-        typeof policy.maxTokens === "number" && Number.isInteger(policy.maxTokens)
-          ? policy.maxTokens
-          : undefined,
-      maxConcurrentRequests:
-        typeof policy.maxConcurrentRequests === "number" &&
-        Number.isInteger(policy.maxConcurrentRequests)
-          ? policy.maxConcurrentRequests
-          : undefined,
-    };
+    return policies;
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(`Invalid TENANT_POLICIES_JSON: ${error.errors[0].message} at ${error.errors[0].path.join(".")}`);
+    }
+    throw new Error(`TENANT_POLICIES_JSON must be a valid JSON object: ${error instanceof Error ? error.message : "unknown error"}`);
   }
-
-  return policies;
 }
 
 let cachedConfig:

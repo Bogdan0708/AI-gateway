@@ -17,7 +17,7 @@
 
 import cors from "cors";
 import express, { NextFunction, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import helmet from "helmet";
 import { randomUUID } from "node:crypto";
 import {
@@ -87,6 +87,217 @@ function getHeaderTenantId(req: Request): string | undefined {
   }
 
   return undefined;
+}
+
+function getBodyTenantId(req: Request): string | undefined {
+  if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+    return undefined;
+  }
+
+  const tenantId = (req.body as { tenant_id?: unknown }).tenant_id;
+  return typeof tenantId === "string" && tenantId.trim() ? tenantId.trim() : undefined;
+}
+
+export function getRateLimitKey(req: Request): string {
+  try {
+    const tenantId = resolveTenantId(getHeaderTenantId(req), getBodyTenantId(req));
+    if (tenantId) {
+      return `tenant:${tenantId}`;
+    }
+  } catch {
+    // Fall back to IP-based limiting when tenant identity is malformed.
+  }
+
+  return `ip:${ipKeyGenerator(req.ip || "unknown")}`;
+}
+
+function isFallbackResponse(input: {
+  requestedProvider?: string;
+  requestedModel?: string;
+  provider: string;
+  model: string;
+}): boolean {
+  return Boolean(
+    (input.requestedProvider && input.requestedProvider !== input.provider) ||
+      (input.requestedModel && input.requestedModel !== input.model),
+  );
+}
+
+export async function buildReadyResponse(
+  req: Pick<Request, "headers">,
+  deps: {
+    checkProviderReadiness: typeof checkProviderReadiness;
+    listProviders: typeof listProviders;
+    getInflightCounts: typeof getInflightCounts;
+    isAuthorizedRequest: typeof isAuthorizedRequest;
+  } = {
+    checkProviderReadiness,
+    listProviders,
+    getInflightCounts,
+    isAuthorizedRequest,
+  },
+): Promise<{
+  statusCode: number;
+  body: Record<string, unknown>;
+}> {
+  const masterKeyConfigured = Boolean(process.env.GATEWAY_MASTER_KEY);
+  const detailed = deps.isAuthorizedRequest(req as Request);
+  const configuredProviders = deps
+    .listProviders()
+    .filter((provider) => provider.enabled);
+
+  try {
+    if (!detailed) {
+      const ready = masterKeyConfigured && configuredProviders.length > 0;
+
+      return {
+        statusCode: ready ? 200 : 503,
+        body: {
+          status: ready ? "ready" : "not_ready",
+          service: "ai-gateway",
+          version: APP_VERSION,
+          timestamp: new Date().toISOString(),
+        },
+      };
+    }
+
+    const providers = await deps.checkProviderReadiness();
+    const ready =
+      masterKeyConfigured &&
+      configuredProviders.length > 0 &&
+      providers.some((provider) => provider.enabled && provider.ready);
+
+    return {
+      statusCode: ready ? 200 : 503,
+      body: {
+        status: ready ? "ready" : "not_ready",
+        service: "ai-gateway",
+        version: APP_VERSION,
+        master_key_configured: masterKeyConfigured,
+        inflight: { global: deps.getInflightCounts().global },
+        providers,
+        timestamp: new Date().toISOString(),
+      },
+    };
+  } catch (error) {
+    return {
+      statusCode: 503,
+      body: {
+        status: "not_ready",
+        service: "ai-gateway",
+        version: APP_VERSION,
+        ...(detailed ? { error: sanitizeProviderError(error) } : {}),
+        timestamp: new Date().toISOString(),
+      },
+    };
+  }
+}
+
+export function buildHealthResponse(
+  enabledProviders: string[],
+): {
+  status: "healthy";
+  service: "ai-gateway";
+  version: string;
+  providers: string[];
+  timestamp: string;
+} {
+  return {
+    status: "healthy",
+    service: "ai-gateway",
+    version: APP_VERSION,
+    providers: enabledProviders,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+export function buildEmbeddingResponse(input: {
+  embeddings: number[][];
+  provider: string;
+  model: string;
+  usage: {
+    promptTokens: number;
+    totalTokens: number;
+  };
+  latencyMs: number;
+  tenantId?: string;
+}) {
+  return {
+    object: "list" as const,
+    data: input.embeddings.map((embedding, index) => ({
+      object: "embedding" as const,
+      index,
+      embedding,
+    })),
+    model: input.model,
+    provider: input.provider,
+    usage: {
+      prompt_tokens: input.usage.promptTokens,
+      total_tokens: input.usage.totalTokens,
+    },
+    latency_ms: input.latencyMs,
+    tenant_id: input.tenantId,
+  };
+}
+
+export function buildChatCompletionResponse(input: {
+  content: string;
+  provider: string;
+  model: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  latencyMs: number;
+  tenantId?: string;
+}) {
+  return {
+    id: `chatcmpl-${randomUUID()}`,
+    object: "chat.completion" as const,
+    created: Math.floor(Date.now() / 1000),
+    model: input.model,
+    provider: input.provider,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant" as const,
+          content: input.content,
+        },
+        finish_reason: "stop",
+      },
+    ],
+    usage: {
+      prompt_tokens: input.usage.promptTokens,
+      completion_tokens: input.usage.completionTokens,
+      total_tokens: input.usage.totalTokens,
+    },
+    latency_ms: input.latencyMs,
+    tenant_id: input.tenantId,
+  };
+}
+
+export function buildSimpleCompletionResponse(input: {
+  content: string;
+  provider: string;
+  model: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  latencyMs: number;
+  tenantId?: string;
+}) {
+  return {
+    content: input.content,
+    provider: input.provider,
+    model: input.model,
+    usage: input.usage,
+    latency_ms: input.latencyMs,
+    tenant_id: input.tenantId,
+  };
 }
 
 function handleOperationError(
@@ -173,6 +384,7 @@ app.use(
     standardHeaders: "draft-8",
     legacyHeaders: false,
     message: { error: "Too many requests, please try again later." },
+    keyGenerator: getRateLimitKey,
     skip: (req) =>
       req.path === "/health" ||
       req.path === "/ping" ||
@@ -197,13 +409,7 @@ app.get("/health", (_req: Request, res: Response) => {
     .filter((provider) => provider.enabled)
     .map((provider) => provider.id);
 
-  res.json({
-    status: "healthy",
-    service: "ai-gateway",
-    version: APP_VERSION,
-    providers: enabledProviders,
-    timestamp: new Date().toISOString(),
-  });
+  res.json(buildHealthResponse(enabledProviders));
 });
 
 app.get("/ping", (_req: Request, res: Response) => {
@@ -211,39 +417,8 @@ app.get("/ping", (_req: Request, res: Response) => {
 });
 
 app.get("/ready", async (req: Request, res: Response) => {
-  try {
-    const providers = await checkProviderReadiness();
-    const enabledProviders = providers.filter((provider) => provider.enabled);
-    const masterKeyConfigured = Boolean(process.env.GATEWAY_MASTER_KEY);
-    const detailed = isAuthorizedRequest(req);
-    const ready =
-      masterKeyConfigured &&
-      enabledProviders.length > 0 &&
-      enabledProviders.some((provider) => provider.ready);
-    const response = {
-      status: ready ? "ready" : "not_ready",
-      service: "ai-gateway",
-      version: APP_VERSION,
-      ...(detailed
-        ? {
-            master_key_configured: masterKeyConfigured,
-            inflight: { global: getInflightCounts().global },
-            providers,
-          }
-        : {}),
-      timestamp: new Date().toISOString(),
-    };
-
-    res.status(ready ? 200 : 503).json(response);
-  } catch (error) {
-    res.status(503).json({
-      status: "not_ready",
-      service: "ai-gateway",
-      version: APP_VERSION,
-      error: sanitizeProviderError(error),
-      timestamp: new Date().toISOString(),
-    });
-  }
+  const response = await buildReadyResponse(req);
+  res.status(response.statusCode).json(response.body);
 });
 
 app.get("/providers", (req: Request, res: Response) => {
@@ -303,30 +478,28 @@ app.post(
       req.log.info(
         {
           tenantId: resolvedTenantId,
+          requestedProvider: provider,
+          requestedModel: model,
           provider: result.provider,
           model: result.model,
+          isFallback: isFallbackResponse({
+            requestedProvider: provider,
+            requestedModel: model,
+            provider: result.provider,
+            model: result.model,
+          }),
           totalTokens: result.usage.totalTokens,
           latencyMs: result.latencyMs,
         },
         "embedding request succeeded",
       );
 
-      res.json({
-        object: "list",
-        data: result.embeddings.map((embedding, index) => ({
-          object: "embedding",
-          index,
-          embedding,
-        })),
-        model: result.model,
-        provider: result.provider,
-        usage: {
-          prompt_tokens: result.usage.promptTokens,
-          total_tokens: result.usage.totalTokens,
-        },
-        latency_ms: result.latencyMs,
-        tenant_id: resolvedTenantId,
-      });
+      res.json(
+        buildEmbeddingResponse({
+          ...result,
+          tenantId: resolvedTenantId,
+        }),
+      );
     } catch (error) {
       handleOperationError(req, res, error, {
         operation: "embedding request",
@@ -390,38 +563,28 @@ app.post(
         {
           tenantId: resolvedTenantId,
           taskType: task_type,
+          requestedProvider: provider,
+          requestedModel: model,
           provider: result.provider,
           model: result.model,
+          isFallback: isFallbackResponse({
+            requestedProvider: provider,
+            requestedModel: model,
+            provider: result.provider,
+            model: result.model,
+          }),
           totalTokens: result.usage.totalTokens,
           latencyMs: result.latencyMs,
         },
         "chat completion succeeded",
       );
 
-      res.json({
-        id: `chatcmpl-${randomUUID()}`,
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: result.model,
-        provider: result.provider,
-        choices: [
-          {
-            index: 0,
-            message: {
-              role: "assistant",
-              content: result.content,
-            },
-            finish_reason: "stop",
-          },
-        ],
-        usage: {
-          prompt_tokens: result.usage.promptTokens,
-          completion_tokens: result.usage.completionTokens,
-          total_tokens: result.usage.totalTokens,
-        },
-        latency_ms: result.latencyMs,
-        tenant_id: resolvedTenantId,
-      });
+      res.json(
+        buildChatCompletionResponse({
+          ...result,
+          tenantId: resolvedTenantId,
+        }),
+      );
     } catch (error) {
       handleOperationError(req, res, error, {
         operation: "chat completion",
@@ -489,22 +652,28 @@ app.post(
       req.log.info(
         {
           tenantId: resolvedTenantId,
+          requestedProvider: provider,
+          requestedModel: model,
           provider: result.provider,
           model: result.model,
+          isFallback: isFallbackResponse({
+            requestedProvider: provider,
+            requestedModel: model,
+            provider: result.provider,
+            model: result.model,
+          }),
           totalTokens: result.usage.totalTokens,
           latencyMs: result.latencyMs,
         },
         "simple completion succeeded",
       );
 
-      res.json({
-        content: result.content,
-        provider: result.provider,
-        model: result.model,
-        usage: result.usage,
-        latency_ms: result.latencyMs,
-        tenant_id: resolvedTenantId,
-      });
+      res.json(
+        buildSimpleCompletionResponse({
+          ...result,
+          tenantId: resolvedTenantId,
+        }),
+      );
     } catch (error) {
       handleOperationError(req, res, error, {
         operation: "simple completion",

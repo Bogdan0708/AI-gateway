@@ -71,6 +71,11 @@ export const perplexityProvider: ProviderConfig = {
   enabled: Boolean(process.env.PERPLEXITY_API_KEY),
   defaultModel: "sonar",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://api.perplexity.ai/chat/completions"),
+  checkReadiness: () =>
+    probeUrl("https://api.perplexity.ai/models", {
+      headers: {
+        Authorization: `Bearer ${process.env.PERPLEXITY_API_KEY}`,
+      },
+    }),
   complete,
 };

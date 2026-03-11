@@ -66,6 +66,11 @@ export const groqProvider: ProviderConfig = {
   enabled: Boolean(process.env.GROQ_API_KEY),
   defaultModel: "llama-3.3-70b-versatile",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://api.groq.com/openai/v1/models"),
+  checkReadiness: () =>
+    probeUrl("https://api.groq.com/openai/v1/models", {
+      headers: {
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+    }),
   complete,
 };

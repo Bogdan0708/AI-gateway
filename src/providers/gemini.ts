@@ -7,9 +7,9 @@ import {
 } from "../types";
 
 const MODELS = [
+  "gemini-3.1-pro",
+  "gemini-3.1-flash-lite",
   "gemini-2.0-flash",
-  "gemini-2.5-flash",
-  "gemini-1.5-pro-latest",
 ] as const;
 const TIMEOUT_MS = 15_000;
 
@@ -106,8 +106,13 @@ export async function complete(
 export const geminiProvider: ProviderConfig = {
   name: "gemini",
   enabled: Boolean(process.env.GOOGLE_API_KEY),
-  defaultModel: "gemini-2.0-flash",
+  defaultModel: "gemini-3.1-pro",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://generativelanguage.googleapis.com"),
+  checkReadiness: () =>
+    probeUrl("https://generativelanguage.googleapis.com/v1beta/models", {
+      headers: {
+        "x-goog-api-key": process.env.GOOGLE_API_KEY || "",
+      },
+    }),
   complete,
 };

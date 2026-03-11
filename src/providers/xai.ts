@@ -65,6 +65,11 @@ export const xaiProvider: ProviderConfig = {
   enabled: Boolean(process.env.XAI_API_KEY),
   defaultModel: "grok-3",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://api.x.ai/v1/models"),
+  checkReadiness: () =>
+    probeUrl("https://api.x.ai/v1/models", {
+      headers: {
+        Authorization: `Bearer ${process.env.XAI_API_KEY}`,
+      },
+    }),
   complete,
 };

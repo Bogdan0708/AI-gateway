@@ -8,14 +8,38 @@ const completeResponse = {
   latencyMs: 1,
 };
 
-async function loadProvidersModule() {
+const originalMaxFallbackAttempts = process.env.MAX_FALLBACK_ATTEMPTS;
+
+async function loadProvidersModule(overrides?: {
+  openai?: { enabled?: boolean; complete?: ReturnType<typeof vi.fn> };
+  claude?: { enabled?: boolean; complete?: ReturnType<typeof vi.fn> };
+  gemini?: { enabled?: boolean; complete?: ReturnType<typeof vi.fn> };
+  xai?: { enabled?: boolean; complete?: ReturnType<typeof vi.fn> };
+}) {
   vi.resetModules();
-  const openaiComplete = vi.fn().mockResolvedValue(completeResponse);
-  const claudeComplete = vi.fn().mockResolvedValue({
-    ...completeResponse,
-    provider: "claude" as const,
-    model: "claude-sonnet-4-20250514",
-  });
+  const openaiComplete =
+    overrides?.openai?.complete ?? vi.fn().mockResolvedValue(completeResponse);
+  const claudeComplete =
+    overrides?.claude?.complete ??
+    vi.fn().mockResolvedValue({
+      ...completeResponse,
+      provider: "claude" as const,
+      model: "claude-sonnet-4-20250514",
+    });
+  const geminiComplete =
+    overrides?.gemini?.complete ??
+    vi.fn().mockResolvedValue({
+      ...completeResponse,
+      provider: "gemini" as const,
+      model: "gemini-2.0-flash",
+    });
+  const xaiComplete =
+    overrides?.xai?.complete ??
+    vi.fn().mockResolvedValue({
+      ...completeResponse,
+      provider: "xai" as const,
+      model: "grok-3",
+    });
 
   vi.doMock("../lib/logger", () => ({
     logger: {
@@ -26,7 +50,7 @@ async function loadProvidersModule() {
   vi.doMock("../providers/openai", () => ({
     openaiProvider: {
       name: "openai",
-      enabled: true,
+      enabled: overrides?.openai?.enabled ?? true,
       defaultModel: "gpt-4o-mini",
       models: ["gpt-4o-mini", "gpt-4o"],
       complete: openaiComplete,
@@ -36,7 +60,7 @@ async function loadProvidersModule() {
   vi.doMock("../providers/claude", () => ({
     claudeProvider: {
       name: "claude",
-      enabled: true,
+      enabled: overrides?.claude?.enabled ?? true,
       defaultModel: "claude-sonnet-4-20250514",
       models: ["claude-sonnet-4-20250514"],
       complete: claudeComplete,
@@ -46,20 +70,20 @@ async function loadProvidersModule() {
   vi.doMock("../providers/gemini", () => ({
     geminiProvider: {
       name: "gemini",
-      enabled: false,
+      enabled: overrides?.gemini?.enabled ?? false,
       defaultModel: "gemini-2.0-flash",
       models: ["gemini-2.0-flash"],
-      complete: vi.fn(),
+      complete: geminiComplete,
     },
   }));
 
   vi.doMock("../providers/xai", () => ({
     xaiProvider: {
       name: "xai",
-      enabled: false,
+      enabled: overrides?.xai?.enabled ?? false,
       defaultModel: "grok-3",
       models: ["grok-3"],
-      complete: vi.fn(),
+      complete: xaiComplete,
     },
   }));
 
@@ -88,6 +112,8 @@ async function loadProvidersModule() {
     ...module,
     openaiComplete,
     claudeComplete,
+    geminiComplete,
+    xaiComplete,
   };
 }
 
@@ -97,6 +123,12 @@ describe("provider routing", () => {
   });
 
   afterEach(() => {
+    if (originalMaxFallbackAttempts === undefined) {
+      delete process.env.MAX_FALLBACK_ATTEMPTS;
+    } else {
+      process.env.MAX_FALLBACK_ATTEMPTS = originalMaxFallbackAttempts;
+    }
+
     vi.unmock("../lib/logger");
     vi.unmock("../providers/openai");
     vi.unmock("../providers/claude");
@@ -160,6 +192,43 @@ describe("provider routing", () => {
 
     expect(response.provider).toBe("claude");
     expect(claudeComplete).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back on non-retryable provider 4xx errors", async () => {
+    const error = Object.assign(new Error("invalid request"), { status: 400 });
+    const { complete, openaiComplete, claudeComplete } = await loadProvidersModule();
+    openaiComplete.mockRejectedValue(error);
+
+    await expect(
+      complete({
+        provider: "openai",
+        allowFallback: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).rejects.toBe(error);
+
+    expect(claudeComplete).not.toHaveBeenCalled();
+  });
+
+  it("caps fallback attempts to the configured maximum", async () => {
+    process.env.MAX_FALLBACK_ATTEMPTS = "2";
+    const { complete, openaiComplete, claudeComplete, geminiComplete } =
+      await loadProvidersModule({
+        gemini: { enabled: true },
+      });
+    openaiComplete.mockRejectedValue(new Error("openai down"));
+    claudeComplete.mockRejectedValue(new Error("claude down"));
+
+    await expect(
+      complete({
+        allowFallback: true,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    ).rejects.toThrow("claude down");
+
+    expect(openaiComplete).toHaveBeenCalledTimes(1);
+    expect(claudeComplete).toHaveBeenCalledTimes(1);
+    expect(geminiComplete).not.toHaveBeenCalled();
   });
 
   it("treats provider aliases passed as model values as provider selection hints", async () => {

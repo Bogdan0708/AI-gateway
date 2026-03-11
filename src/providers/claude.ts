@@ -7,9 +7,9 @@ import {
 } from "../types";
 
 const MODELS = [
+  "claude-4.6-opus",
+  "claude-4.6-sonnet",
   "claude-sonnet-4-20250514",
-  "claude-3-5-sonnet-20241022",
-  "claude-3-haiku-20240307",
 ] as const;
 const TIMEOUT_MS = 15_000;
 
@@ -89,8 +89,14 @@ export async function complete(
 export const claudeProvider: ProviderConfig = {
   name: "claude",
   enabled: Boolean(process.env.ANTHROPIC_API_KEY),
-  defaultModel: "claude-sonnet-4-20250514",
+  defaultModel: "claude-4.6-opus",
   models: [...MODELS],
-  checkReadiness: () => probeUrl("https://api.anthropic.com/v1/messages"),
+  checkReadiness: () =>
+    probeUrl("https://api.anthropic.com/v1/models", {
+      headers: {
+        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+        "anthropic-version": "2023-06-01",
+      },
+    }),
   complete,
 };

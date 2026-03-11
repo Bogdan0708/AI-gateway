@@ -1,6 +1,7 @@
 import { logger } from "../lib/logger";
 import { ErrorCodes, type ErrorCode } from "../lib/error-codes";
 import { sanitizeProviderError } from "../lib/provider-errors";
+import { getSystemPromptForModel } from "../lib/base-prompts";
 import {
   CompletionRequest,
   CompletionResponse,
@@ -34,9 +35,53 @@ const fallbackChain: ProviderName[] = [
   "perplexity",
 ];
 
+const DEFAULT_MAX_FALLBACK_ATTEMPTS = 3;
+
 export const providers = fallbackChain.map(
   (providerName) => providerRegistry[providerName],
 );
+
+function getMaxFallbackAttempts(): number {
+  const configured = Number(process.env.MAX_FALLBACK_ATTEMPTS);
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_MAX_FALLBACK_ATTEMPTS;
+}
+
+function getProviderErrorStatus(error: Error): number | undefined {
+  const candidate = error as Error & {
+    status?: unknown;
+    statusCode?: unknown;
+    response?: { status?: unknown };
+  };
+
+  if (typeof candidate.status === "number") {
+    return candidate.status;
+  }
+
+  if (typeof candidate.statusCode === "number") {
+    return candidate.statusCode;
+  }
+
+  if (typeof candidate.response?.status === "number") {
+    return candidate.response.status;
+  }
+
+  return undefined;
+}
+
+function isRetryableProviderError(error: Error): boolean {
+  if (error.name === "AbortError") {
+    return true;
+  }
+
+  const status = getProviderErrorStatus(error);
+  if (status !== undefined) {
+    return status >= 500 || status === 429;
+  }
+
+  return true;
+}
 
 export class CompletionRoutingError extends Error {
   public readonly code: ErrorCode;
@@ -227,7 +272,7 @@ export async function complete(
     request.allowFallback ?? false,
     request.allowedProviders,
     request.allowedModels,
-  );
+  ).slice(0, getMaxFallbackAttempts());
 
   if (providersInOrder.length === 0) {
     throw new Error("No AI providers configured");
@@ -246,9 +291,26 @@ export async function complete(
       ) ??
       provider.defaultModel;
 
+    // Inject platform system prompt if enabled
+    const messages = [...request.messages];
+    if (process.env.PLATFORM_SYSTEM_PROMPTS_ENABLED === "true") {
+      const platformPrompt = getSystemPromptForModel(model);
+      const existingSystemIndex = messages.findIndex((m) => m.role === "system");
+
+      if (existingSystemIndex !== -1) {
+        messages[existingSystemIndex] = {
+          ...messages[existingSystemIndex],
+          content: `${platformPrompt}\n\n${messages[existingSystemIndex].content}`,
+        };
+      } else {
+        messages.unshift({ role: "system", content: platformPrompt });
+      }
+    }
+
     try {
       return await provider.complete({
         ...request,
+        messages,
         model,
         maxTokens,
         temperature,
@@ -261,10 +323,16 @@ export async function complete(
         {
           provider: provider.name,
           model,
+          retryable: isRetryableProviderError(providerError),
           error: sanitizeProviderError(providerError),
         },
         "provider completion failed, trying fallback",
       );
+
+      if (!isRetryableProviderError(providerError)) {
+        throw providerError;
+      }
+
       lastError = providerError;
     }
   }

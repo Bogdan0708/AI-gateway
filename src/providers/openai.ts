@@ -8,7 +8,7 @@ import {
   ProviderConfig,
 } from "../types";
 
-const MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-5"] as const;
+const MODELS = ["gpt-5.4-pro", "gpt-5.3-instant", "gpt-4o", "gpt-4o-mini"] as const;
 const EMBEDDING_MODELS = ["text-embedding-3-small", "text-embedding-3-large"] as const;
 const TIMEOUT_MS = 15_000;
 
@@ -96,11 +96,16 @@ export async function embed(
 export const openaiProvider: ProviderConfig = {
   name: "openai",
   enabled: Boolean(process.env.OPENAI_API_KEY),
-  defaultModel: "gpt-4o-mini",
+  defaultModel: "gpt-5.4-pro",
   models: [...MODELS],
   embeddingModels: [...EMBEDDING_MODELS],
   defaultEmbeddingModel: "text-embedding-3-small",
-  checkReadiness: () => probeUrl("https://api.openai.com/v1/models"),
+  checkReadiness: () =>
+    probeUrl("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+    }),
   embed,
   complete,
 };
