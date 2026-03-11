@@ -61,9 +61,15 @@ function parsePolicies(value: string | undefined): Record<string, TenantPolicyCo
     return policies;
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Invalid TENANT_POLICIES_JSON: ${error.issues[0].message} at ${error.issues[0].path.join(".")}`);
+      throw new Error(
+        `Invalid TENANT_POLICIES_JSON: ${error.issues[0].message} at ${error.issues[0].path.join(".")}`,
+        { cause: error },
+      );
     }
-    throw new Error(`TENANT_POLICIES_JSON must be a valid JSON object: ${error instanceof Error ? error.message : "unknown error"}`);
+    throw new Error(
+      `TENANT_POLICIES_JSON must be a valid JSON object: ${error instanceof Error ? error.message : "unknown error"}`,
+      { cause: error },
+    );
   }
 }
 
