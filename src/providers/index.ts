@@ -77,7 +77,7 @@ function isRetryableProviderError(error: Error): boolean {
 
   const status = getProviderErrorStatus(error);
   if (status !== undefined) {
-    return status >= 500 || status === 429;
+    return status >= 500 || [401, 403, 429].includes(status);
   }
 
   return true;
@@ -169,13 +169,7 @@ function resolveProviderOrder(
       return [requested];
     }
 
-    const fallbackProviders = requestedModel
-      ? enabledProviders.filter(
-          (provider) =>
-            provider.name !== requested.name &&
-            provider.models.includes(requestedModel),
-        )
-      : enabledProviders.filter((provider) => provider.name !== requested.name);
+    const fallbackProviders = enabledProviders.filter((provider) => provider.name !== requested.name);
 
     return [requested, ...fallbackProviders];
   }
@@ -196,7 +190,14 @@ function resolveProviderOrder(
     );
   }
 
-  return allowFallback ? matchingProviders : [matchingProviders[0]];
+  if (!allowFallback) {
+    return [matchingProviders[0]];
+  }
+
+  const primaryProvider = matchingProviders[0];
+  const fallbackProviders = enabledProviders.filter((provider) => provider.name !== primaryProvider.name);
+
+  return [primaryProvider, ...fallbackProviders];
 }
 
 export function listProviders(): Array<{
@@ -285,7 +286,9 @@ export async function complete(
 
   for (const provider of providersInOrder) {
     const model =
-      normalized.model ??
+      (normalized.model && provider.models.includes(normalized.model)
+        ? normalized.model
+        : undefined) ??
       request.allowedModels?.find((allowedModel) =>
         provider.models.includes(allowedModel),
       ) ??
