@@ -19,6 +19,7 @@ This is not a substitute for verifying the actual FundEU and PrimarIA client cod
 | `GET /providers` | Likely used | Likely used | Response can be tenant-filtered. Requires auth. |
 | `POST /v1/chat/completions` | Yes | Yes | Primary OpenAI-compatible interface. |
 | `POST /complete` | Unknown | Likely yes | Legacy simplified interface. Treat as compatibility-sensitive. |
+| `POST /v1/chat/completions` (stream) | Likely yes | Unknown | SSE streaming via `stream: true` in request body. |
 | `POST /v1/embeddings` | Likely yes | Unknown | Likely used by FundEU retrieval/search flows. |
 
 ## Request Compatibility

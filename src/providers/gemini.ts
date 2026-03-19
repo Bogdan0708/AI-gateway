@@ -3,6 +3,7 @@ import { probeUrl } from "../lib/readiness";
 import {
   CompletionRequest,
   CompletionResponse,
+  CompletionStream,
   ProviderConfig,
 } from "../types";
 
@@ -103,6 +104,75 @@ export async function complete(
   }
 }
 
+const STREAM_TIMEOUT_MS = 120_000;
+
+export function stream(
+  request: CompletionRequest & {
+    model: string;
+    maxTokens: number;
+    temperature: number;
+  },
+): CompletionStream {
+  const { systemInstruction, history, prompt } = splitMessages(request.messages);
+  const model = getClient().getGenerativeModel({ model: request.model });
+  const chat = model.startChat({
+    history,
+    systemInstruction,
+    generationConfig: {
+      maxOutputTokens: request.maxTokens,
+      temperature: request.temperature,
+    },
+  });
+
+  return new ReadableStream({
+    async start(controller) {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), STREAM_TIMEOUT_MS);
+
+      try {
+        const result = await chat.sendMessageStream(prompt, {
+          signal: abortController.signal,
+        });
+
+        for await (const chunk of result.stream) {
+          const text = chunk.text();
+          if (text) {
+            controller.enqueue({
+              content: text,
+              provider: "gemini",
+              model: request.model,
+            });
+          }
+        }
+
+        const response = await result.response;
+        const usage = response.usageMetadata;
+        controller.enqueue({
+          content: "",
+          provider: "gemini",
+          model: request.model,
+          finishReason: "stop",
+          ...(usage
+            ? {
+                usage: {
+                  promptTokens: usage.promptTokenCount ?? 0,
+                  completionTokens: usage.candidatesTokenCount ?? 0,
+                  totalTokens: usage.totalTokenCount ?? 0,
+                },
+              }
+            : {}),
+        });
+
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  });
+}
+
 export const geminiProvider: ProviderConfig = {
   name: "gemini",
   enabled: Boolean(process.env.GOOGLE_API_KEY),
@@ -115,4 +185,5 @@ export const geminiProvider: ProviderConfig = {
       },
     }),
   complete,
+  stream,
 };

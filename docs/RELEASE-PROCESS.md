@@ -31,6 +31,7 @@ Every production-facing PR should answer:
 - authenticated `GET /ready` returns `200`
 - authenticated `GET /ready` shows at least one `ready: true` provider
 - one authenticated `POST /v1/chat/completions` succeeds
+- one authenticated `POST /v1/chat/completions` with `stream: true` returns SSE chunks if streaming is enabled
 - one authenticated `POST /v1/embeddings` succeeds if embeddings are enabled
 - tenant-filtered `GET /providers` behaves correctly for a known tenant
 

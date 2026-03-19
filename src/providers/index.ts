@@ -5,6 +5,7 @@ import { getSystemPromptForModel } from "../lib/base-prompts";
 import {
   CompletionRequest,
   CompletionResponse,
+  CompletionStream,
   EmbeddingRequest,
   EmbeddingResponse,
   ProviderConfig,
@@ -341,6 +342,84 @@ export async function complete(
   }
 
   throw lastError || new Error("All providers failed");
+}
+
+export function completeStream(
+  request: CompletionRequest,
+): CompletionStream {
+  const normalized = normalizeRequestedProviderAndModel({
+    provider: request.provider,
+    model: request.model,
+  });
+  const providersInOrder = resolveProviderOrder(
+    normalized.provider,
+    normalized.model,
+    request.allowFallback ?? false,
+    request.allowedProviders,
+    request.allowedModels,
+  ).slice(0, getMaxFallbackAttempts());
+
+  if (providersInOrder.length === 0) {
+    throw new Error("No AI providers configured");
+  }
+
+  const maxTokens = request.maxTokens ?? 2048;
+  const temperature = request.temperature ?? 0.7;
+
+  // Find first provider that supports streaming
+  for (const provider of providersInOrder) {
+    if (!provider.stream) {
+      logger.debug(
+        { provider: provider.name },
+        "provider does not support streaming, trying next",
+      );
+      continue;
+    }
+
+    const model =
+      (normalized.model && provider.models.includes(normalized.model)
+        ? normalized.model
+        : undefined) ??
+      request.allowedModels?.find((allowedModel) =>
+        provider.models.includes(allowedModel),
+      ) ??
+      provider.defaultModel;
+
+    const messages = [...request.messages];
+    if (process.env.PLATFORM_SYSTEM_PROMPTS_ENABLED === "true") {
+      const platformPrompt = getSystemPromptForModel(model);
+      const existingSystemIndex = messages.findIndex((m) => m.role === "system");
+
+      if (existingSystemIndex !== -1) {
+        messages[existingSystemIndex] = {
+          ...messages[existingSystemIndex],
+          content: `${platformPrompt}\n\n${messages[existingSystemIndex].content}`,
+        };
+      } else {
+        messages.unshift({ role: "system", content: platformPrompt });
+      }
+    }
+
+    logger.info(
+      { provider: provider.name, model },
+      "starting stream",
+    );
+
+    return provider.stream({
+      ...request,
+      messages,
+      model,
+      maxTokens,
+      temperature,
+      provider: normalized.provider,
+    });
+  }
+
+  throw new CompletionRoutingError(
+    "No streaming-capable providers available",
+    503,
+    ErrorCodes.routingProviderDisabled,
+  );
 }
 
 export async function embed(

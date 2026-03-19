@@ -3,6 +3,7 @@ import { probeUrl } from "../lib/readiness";
 import {
   CompletionRequest,
   CompletionResponse,
+  CompletionStream,
   ProviderConfig,
 } from "../types";
 
@@ -86,6 +87,72 @@ export async function complete(
   }
 }
 
+const STREAM_TIMEOUT_MS = 120_000;
+
+export function stream(
+  request: CompletionRequest & {
+    model: string;
+    maxTokens: number;
+    temperature: number;
+  },
+): CompletionStream {
+  const { system, chat } = splitSystemMessage(request.messages);
+
+  return new ReadableStream({
+    async start(controller) {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), STREAM_TIMEOUT_MS);
+
+      try {
+        const response = getClient().messages.stream(
+          {
+            model: request.model,
+            max_tokens: request.maxTokens,
+            temperature: request.temperature,
+            system: system || undefined,
+            messages: chat,
+          },
+          { signal: abortController.signal },
+        );
+
+        let promptTokens = 0;
+        let completionTokens = 0;
+
+        for await (const event of response) {
+          if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+            controller.enqueue({
+              content: event.delta.text,
+              provider: "claude",
+              model: request.model,
+            });
+          } else if (event.type === "message_delta") {
+            completionTokens = event.usage?.output_tokens ?? completionTokens;
+            controller.enqueue({
+              content: "",
+              provider: "claude",
+              model: request.model,
+              finishReason: event.delta.stop_reason ?? "end_turn",
+              usage: {
+                promptTokens,
+                completionTokens,
+                totalTokens: promptTokens + completionTokens,
+              },
+            });
+          } else if (event.type === "message_start") {
+            promptTokens = event.message.usage?.input_tokens ?? 0;
+          }
+        }
+
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  });
+}
+
 export const claudeProvider: ProviderConfig = {
   name: "claude",
   enabled: Boolean(process.env.ANTHROPIC_API_KEY),
@@ -99,4 +166,5 @@ export const claudeProvider: ProviderConfig = {
       },
     }),
   complete,
+  stream,
 };

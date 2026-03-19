@@ -3,6 +3,7 @@ import { probeUrl } from "../lib/readiness";
 import {
   CompletionRequest,
   CompletionResponse,
+  CompletionStream,
   EmbeddingRequest,
   EmbeddingResponse,
   ProviderConfig,
@@ -60,6 +61,71 @@ export async function complete(
   }
 }
 
+const STREAM_TIMEOUT_MS = 120_000;
+
+export function stream(
+  request: CompletionRequest & {
+    model: string;
+    maxTokens: number;
+    temperature: number;
+  },
+): CompletionStream {
+  return new ReadableStream({
+    async start(controller) {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), STREAM_TIMEOUT_MS);
+
+      try {
+        const response = await getClient().chat.completions.create(
+          {
+            model: request.model,
+            messages: request.messages,
+            max_tokens: request.maxTokens,
+            temperature: request.temperature,
+            stream: true,
+            stream_options: { include_usage: true },
+          },
+          { signal: abortController.signal },
+        );
+
+        for await (const chunk of response) {
+          const delta = chunk.choices[0]?.delta;
+          if (delta?.content) {
+            controller.enqueue({
+              content: delta.content,
+              provider: "openai",
+              model: request.model,
+              finishReason: chunk.choices[0]?.finish_reason ?? undefined,
+            });
+          } else if (chunk.choices[0]?.finish_reason) {
+            controller.enqueue({
+              content: "",
+              provider: "openai",
+              model: request.model,
+              finishReason: chunk.choices[0].finish_reason,
+              ...(chunk.usage
+                ? {
+                    usage: {
+                      promptTokens: chunk.usage.prompt_tokens ?? 0,
+                      completionTokens: chunk.usage.completion_tokens ?? 0,
+                      totalTokens: chunk.usage.total_tokens ?? 0,
+                    },
+                  }
+                : {}),
+            });
+          }
+        }
+
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  });
+}
+
 export async function embed(
   request: EmbeddingRequest & {
     model: string;
@@ -108,4 +174,5 @@ export const openaiProvider: ProviderConfig = {
     }),
   embed,
   complete,
+  stream,
 };

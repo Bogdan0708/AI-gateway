@@ -43,6 +43,7 @@ import {
 import {
   checkProviderReadiness,
   complete,
+  completeStream,
   CompletionRoutingError,
   embed,
   listProviders,
@@ -524,6 +525,7 @@ app.post(
         temperature,
         tenant_id,
         task_type,
+        stream: isStream,
         allow_fallback,
         allowFallback,
       } = req.body as {
@@ -535,10 +537,86 @@ app.post(
         temperature?: number;
         tenant_id?: string;
         task_type?: string;
+        stream?: boolean;
         allow_fallback?: boolean;
         allowFallback?: boolean;
       };
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
+
+      if (isStream) {
+        req.setTimeout(120_000);
+
+        enforceTenantPolicy({
+          tenantId: resolvedTenantId,
+          provider,
+          model,
+          maxTokens: max_tokens ?? maxTokens,
+        });
+
+        const stream = completeStream({
+          messages,
+          provider,
+          model,
+          maxTokens: max_tokens ?? maxTokens,
+          temperature,
+          tenantId: resolvedTenantId,
+          taskType: task_type,
+          allowFallback: allow_fallback ?? allowFallback,
+        });
+
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "X-Tenant-ID": resolvedTenantId || "",
+        });
+
+        const reader = stream.getReader();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const sseData = {
+              id: `chatcmpl-${randomUUID()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: value.model,
+              provider: value.provider,
+              choices: [
+                {
+                  index: 0,
+                  delta: { content: value.content },
+                  finish_reason: value.finishReason || null,
+                },
+              ],
+              ...(value.usage
+                ? {
+                    usage: {
+                      prompt_tokens: value.usage.promptTokens,
+                      completion_tokens: value.usage.completionTokens,
+                      total_tokens: value.usage.totalTokens,
+                    },
+                  }
+                : {}),
+            };
+            res.write(`data: ${JSON.stringify(sseData)}\n\n`);
+          }
+
+          res.write("data: [DONE]\n\n");
+          res.end();
+        } catch (streamError) {
+          req.log.error(
+            { error: sanitizeProviderError(streamError) },
+            "stream failed",
+          );
+          res.write(
+            `data: ${JSON.stringify({ error: { message: "Stream failed", code: ErrorCodes.aiCompletionFailed } })}\n\n`,
+          );
+          res.end();
+        }
+        return;
+      }
 
       const result = await withConcurrencyLimit(resolvedTenantId, () =>
         complete({

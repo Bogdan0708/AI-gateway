@@ -54,6 +54,20 @@ export interface EmbeddingResponse {
   latencyMs: number;
 }
 
+export interface StreamChunk {
+  content: string;
+  provider: ProviderName;
+  model: string;
+  finishReason?: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+
+export type CompletionStream = ReadableStream<StreamChunk>;
+
 export interface ProviderConfig {
   name: ProviderName;
   enabled: boolean;
@@ -77,4 +91,11 @@ export interface ProviderConfig {
       temperature: number;
     },
   ) => Promise<CompletionResponse>;
+  stream?: (
+    request: CompletionRequest & {
+      model: string;
+      maxTokens: number;
+      temperature: number;
+    },
+  ) => CompletionStream;
 }
