@@ -38,6 +38,12 @@ const fallbackChain: ProviderName[] = [
 
 const DEFAULT_MAX_FALLBACK_ATTEMPTS = 3;
 
+const providerModelAliases: Partial<Record<ProviderName, Record<string, string>>> = {
+  claude: {
+    "claude-4.6-sonnet": "claude-sonnet-4-0",
+  },
+};
+
 export const providers = fallbackChain.map(
   (providerName) => providerRegistry[providerName],
 );
@@ -84,6 +90,49 @@ function isRetryableProviderError(error: Error): boolean {
   return true;
 }
 
+function isModelAvailabilityError(error: Error): boolean {
+  const status = getProviderErrorStatus(error);
+  const message = `${error.message} ${sanitizeProviderError(error)}`.toLowerCase();
+
+  if (status !== undefined && [403, 404].includes(status)) {
+    return true;
+  }
+
+  return (
+    status === 400 &&
+    (message.includes("model") ||
+      message.includes("not_found_error") ||
+      message.includes("not supported in the v1/chat/completions"))
+  );
+}
+
+function getModelCandidates(input: {
+  provider: ProviderConfig;
+  requestedModel?: string;
+  allowedModels?: string[];
+}): string[] {
+  const { provider, requestedModel, allowedModels } = input;
+
+  if (requestedModel && provider.models.includes(requestedModel)) {
+    return [requestedModel];
+  }
+
+  const orderedProviderModels = provider.models.filter(
+    (model) => !allowedModels || allowedModels.includes(model),
+  );
+
+  if (orderedProviderModels.length > 0) {
+    return orderedProviderModels;
+  }
+
+  if (!allowedModels) {
+    return [provider.defaultModel];
+  }
+
+  const allowedDefault = allowedModels.find((model) => model === provider.defaultModel);
+  return allowedDefault ? [allowedDefault] : [];
+}
+
 export class CompletionRoutingError extends Error {
   public readonly code: ErrorCode;
 
@@ -117,7 +166,15 @@ function normalizeRequestedProviderAndModel(input: {
     };
   }
 
-  return input;
+  const provider = input.provider as ProviderName | undefined;
+  const aliasMap = provider ? providerModelAliases[provider] : undefined;
+  const normalizedModel =
+    input.model && aliasMap ? aliasMap[input.model] ?? input.model : input.model;
+
+  return {
+    provider: input.provider,
+    model: normalizedModel,
+  };
 }
 
 function resolveProviderOrder(
@@ -286,58 +343,74 @@ export async function complete(
   let lastError: Error | null = null;
 
   for (const provider of providersInOrder) {
-    const model =
-      (normalized.model && provider.models.includes(normalized.model)
-        ? normalized.model
-        : undefined) ??
-      request.allowedModels?.find((allowedModel) =>
-        provider.models.includes(allowedModel),
-      ) ??
-      provider.defaultModel;
+    const modelCandidates = getModelCandidates({
+      provider,
+      requestedModel: normalized.model,
+      allowedModels: request.allowedModels,
+    });
 
-    // Inject platform system prompt if enabled
-    const messages = [...request.messages];
-    if (process.env.PLATFORM_SYSTEM_PROMPTS_ENABLED === "true") {
-      const platformPrompt = getSystemPromptForModel(model);
-      const existingSystemIndex = messages.findIndex((m) => m.role === "system");
-
-      if (existingSystemIndex !== -1) {
-        messages[existingSystemIndex] = {
-          ...messages[existingSystemIndex],
-          content: `${platformPrompt}\n\n${messages[existingSystemIndex].content}`,
-        };
-      } else {
-        messages.unshift({ role: "system", content: platformPrompt });
-      }
+    if (modelCandidates.length === 0) {
+      continue;
     }
 
-    try {
-      return await provider.complete({
-        ...request,
-        messages,
-        model,
-        maxTokens,
-        temperature,
-        provider: normalized.provider,
-      });
-    } catch (error) {
-      const providerError =
-        error instanceof Error ? error : new Error("Unknown provider error");
-      logger.warn(
-        {
-          provider: provider.name,
-          model,
-          retryable: isRetryableProviderError(providerError),
-          error: sanitizeProviderError(providerError),
-        },
-        "provider completion failed, trying fallback",
-      );
+    // Inject platform system prompt if enabled
+    for (let index = 0; index < modelCandidates.length; index += 1) {
+      const model = modelCandidates[index];
+      const messages = [...request.messages];
+      if (process.env.PLATFORM_SYSTEM_PROMPTS_ENABLED === "true") {
+        const platformPrompt = getSystemPromptForModel(model);
+        const existingSystemIndex = messages.findIndex((m) => m.role === "system");
 
-      if (!isRetryableProviderError(providerError)) {
-        throw providerError;
+        if (existingSystemIndex !== -1) {
+          messages[existingSystemIndex] = {
+            ...messages[existingSystemIndex],
+            content: `${platformPrompt}\n\n${messages[existingSystemIndex].content}`,
+          };
+        } else {
+          messages.unshift({ role: "system", content: platformPrompt });
+        }
       }
 
-      lastError = providerError;
+      try {
+        return await provider.complete({
+          ...request,
+          messages,
+          model,
+          maxTokens,
+          temperature,
+          provider: normalized.provider,
+        });
+      } catch (error) {
+        const providerError =
+          error instanceof Error ? error : new Error("Unknown provider error");
+        const hasNextModelCandidate = index < modelCandidates.length - 1;
+        logger.warn(
+          {
+            provider: provider.name,
+            model,
+            retryable: isRetryableProviderError(providerError),
+            modelFallback: hasNextModelCandidate && !normalized.model && isModelAvailabilityError(providerError),
+            error: sanitizeProviderError(providerError),
+          },
+          "provider completion failed, trying fallback",
+        );
+
+        if (
+          hasNextModelCandidate &&
+          !normalized.model &&
+          isModelAvailabilityError(providerError)
+        ) {
+          lastError = providerError;
+          continue;
+        }
+
+        if (!isRetryableProviderError(providerError)) {
+          throw providerError;
+        }
+
+        lastError = providerError;
+        break;
+      }
     }
   }
 

@@ -51,8 +51,8 @@ async function loadProvidersModule(overrides?: {
     openaiProvider: {
       name: "openai",
       enabled: overrides?.openai?.enabled ?? true,
-      defaultModel: "gpt-4o-mini",
-      models: ["gpt-4o-mini", "gpt-4o"],
+      defaultModel: "gpt-5.2",
+      models: ["gpt-5.2", "gpt-5", "gpt-5-mini", "gpt-4o", "gpt-4o-mini"],
       complete: openaiComplete,
     },
   }));
@@ -61,8 +61,8 @@ async function loadProvidersModule(overrides?: {
     claudeProvider: {
       name: "claude",
       enabled: overrides?.claude?.enabled ?? true,
-      defaultModel: "claude-sonnet-4-20250514",
-      models: ["claude-sonnet-4-20250514"],
+      defaultModel: "claude-opus-4-1",
+      models: ["claude-opus-4-1", "claude-opus-4-0", "claude-sonnet-4-0"],
       complete: claudeComplete,
     },
   }));
@@ -71,8 +71,8 @@ async function loadProvidersModule(overrides?: {
     geminiProvider: {
       name: "gemini",
       enabled: overrides?.gemini?.enabled ?? false,
-      defaultModel: "gemini-2.0-flash",
-      models: ["gemini-2.0-flash"],
+      defaultModel: "gemini-3-pro-preview",
+      models: ["gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro"],
       complete: geminiComplete,
     },
   }));
@@ -243,8 +243,50 @@ describe("provider routing", () => {
     expect(openaiComplete).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openai",
-        model: "gpt-4o-mini",
+        model: "gpt-5.2",
       }),
+    );
+  });
+
+  it("normalizes Claude compatibility model aliases before routing", async () => {
+    const { complete, claudeComplete } = await loadProvidersModule();
+
+    await complete({
+      provider: "claude",
+      model: "claude-4.6-sonnet",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(claudeComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "claude",
+        model: "claude-sonnet-4-0",
+      }),
+    );
+  });
+
+  it("tries the next model in the same provider when the default model is unavailable", async () => {
+    const unavailableModelError = Object.assign(new Error("model not found"), {
+      status: 404,
+    });
+    const { complete, openaiComplete } = await loadProvidersModule();
+    openaiComplete
+      .mockRejectedValueOnce(unavailableModelError)
+      .mockResolvedValueOnce(completeResponse);
+
+    const response = await complete({
+      provider: "openai",
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    expect(response.provider).toBe("openai");
+    expect(openaiComplete).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ model: "gpt-5.2" }),
+    );
+    expect(openaiComplete).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ model: "gpt-5" }),
     );
   });
 });

@@ -93,6 +93,7 @@ The container `HEALTHCHECK` targets `GET /health` for cheap liveness. Use authen
 ## 🔍 Operational Notes
 
 - `/health` is a cheap liveness endpoint. Public `/ready` is intentionally cheap and non-probing. Deployment and traffic-gating checks must call authenticated `/ready`.
+- Production deployment must target the canonical Cloud Run service URL from `gcloud run services describe ai-gateway --project mitch-ai-services --region europe-central2 --format='value(status.url)'` rather than assuming a regional alias.
 - Error responses now include stable `error.code` values such as `routing.unsupported_provider`, `tenant.required`, and `concurrency.global_limit_reached` for alerting and log queries.
 - Provider fallback is capped to `MAX_FALLBACK_ATTEMPTS` and skips retries for non-retryable provider 4xx failures.
 - Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.

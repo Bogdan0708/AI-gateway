@@ -7,10 +7,17 @@ import {
   ProviderConfig,
 } from "../types";
 
+const MODEL_ALIASES: Record<string, string> = {
+  // Backward-compatible alias for older consumer configs; do not advertise it.
+  "claude-4.6-sonnet": "claude-sonnet-4-0",
+};
+
 const MODELS = [
-  "claude-4.6-opus",
-  "claude-4.6-sonnet",
-  "claude-sonnet-4-20250514",
+  "claude-opus-4-1",
+  "claude-opus-4-0",
+  "claude-sonnet-4-0",
+  "claude-3-7-sonnet-latest",
+  "claude-3-5-haiku-latest",
 ] as const;
 const TIMEOUT_MS = 15_000;
 
@@ -51,6 +58,7 @@ export async function complete(
   },
 ): Promise<CompletionResponse> {
   const { system, chat } = splitSystemMessage(request.messages);
+  const apiModel = MODEL_ALIASES[request.model] ?? request.model;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
   const start = Date.now();
@@ -58,7 +66,7 @@ export async function complete(
   try {
     const response = await getClient().messages.create(
       {
-        model: request.model,
+        model: apiModel,
         max_tokens: request.maxTokens,
         temperature: request.temperature,
         system: system || undefined,
@@ -156,7 +164,7 @@ export function stream(
 export const claudeProvider: ProviderConfig = {
   name: "claude",
   enabled: Boolean(process.env.ANTHROPIC_API_KEY),
-  defaultModel: "claude-4.6-opus",
+  defaultModel: "claude-opus-4-1",
   models: [...MODELS],
   checkReadiness: () =>
     probeUrl("https://api.anthropic.com/v1/models", {

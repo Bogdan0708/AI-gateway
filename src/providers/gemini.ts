@@ -8,9 +8,11 @@ import {
 } from "../types";
 
 const MODELS = [
-  "gemini-3.1-pro",
-  "gemini-3.1-flash-lite",
-  "gemini-2.0-flash",
+  "gemini-3-pro-preview",
+  "gemini-3-flash-preview",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
 ] as const;
 const TIMEOUT_MS = 15_000;
 
@@ -176,7 +178,7 @@ export function stream(
 export const geminiProvider: ProviderConfig = {
   name: "gemini",
   enabled: Boolean(process.env.GOOGLE_API_KEY),
-  defaultModel: "gemini-3.1-pro",
+  defaultModel: "gemini-3-pro-preview",
   models: [...MODELS],
   checkReadiness: () =>
     probeUrl("https://generativelanguage.googleapis.com/v1beta/models", {

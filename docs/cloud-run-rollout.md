@@ -17,11 +17,21 @@ If Cloud Run container concurrency is set above `20`, keep `MAX_CONCURRENT_REQUE
 ## Rollout Order
 
 1. Deploy the current code with `/ready` enabled and `REQUIRE_TENANT_ID=false`.
-2. Set `MAX_CONCURRENT_REQUESTS` and a minimal `TENANT_POLICIES_JSON` for known tenants.
-3. Verify authenticated `/ready` returns `200` and includes at least one `ready: true` provider.
-4. Confirm logs contain stable `error.code` values for rejected traffic.
-5. Watch Cloud Run request latency, 5xx rate, and saturation during peak traffic.
-6. After clients consistently send tenant identity, switch `REQUIRE_TENANT_ID=true`.
+2. For production, target the canonical gateway service in `mitch-ai-services / europe-central2 / ai-gateway`.
+3. Resolve the verification URL from Cloud Run before smoke tests:
+
+```bash
+gcloud run services describe ai-gateway \
+  --project mitch-ai-services \
+  --region europe-central2 \
+  --format='value(status.url)'
+```
+
+4. Set `MAX_CONCURRENT_REQUESTS` and a minimal `TENANT_POLICIES_JSON` for known tenants.
+5. Verify authenticated `/ready` returns `200` and includes at least one `ready: true` provider.
+6. Confirm logs contain stable `error.code` values for rejected traffic.
+7. Watch Cloud Run request latency, 5xx rate, and saturation during peak traffic.
+8. After clients consistently send tenant identity, switch `REQUIRE_TENANT_ID=true`.
 
 ## Pre-Deploy Checks
 
@@ -30,6 +40,8 @@ If Cloud Run container concurrency is set above `20`, keep `MAX_CONCURRENT_REQUE
 - `npm run build`
 - Confirm `GATEWAY_MASTER_KEY` and provider keys are sourced from Secret Manager or equivalent secure env injection.
 - Confirm deployment or traffic-gating checks use authenticated `GET /ready`. Keep container health checks on `GET /health`.
+- Pin every `gcloud run` command to the intended `--project` and `--region`; do not rely on CLI defaults.
+- Use the Cloud Run `status.url` value as the canonical gateway URL. Do not assume a regional `ai-gateway-<project-number>.<region>.run.app` alias is current.
 
 ## Smoke Checks After Deploy
 
