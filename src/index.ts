@@ -28,6 +28,7 @@ import {
 import { ErrorCodes } from "./lib/error-codes";
 import { httpLogger, logger } from "./lib/logger";
 import { getRequestErrorResponse } from "./lib/request-errors";
+import { createTelemetryLifecycle } from "./lib/telemetry";
 import {
   enforceTenantPolicy,
   filterProvidersForTenant,
@@ -48,12 +49,21 @@ import {
   embed,
   listProviders,
 } from "./providers";
+import {
+  aiRequestDurationMs,
+  aiRequestsTotal,
+  aiTokensTotal,
+  httpRequestDurationMs,
+  httpRequestsTotal,
+  metricsRegistry,
+} from "./lib/metrics";
 import { sanitizeProviderError } from "./lib/provider-errors";
 import { APP_VERSION } from "./lib/version";
 import { CompletionMessage } from "./types";
 
 const app = express();
 const port = Number(process.env.PORT || 8080);
+const telemetry = createTelemetryLifecycle(logger);
 
 // Cloud Run sits behind Google-managed proxies/load balancers.
 // Trust the first proxy hop so req.ip and rate limiting use the client IP.
@@ -373,10 +383,65 @@ function handleOperationError(
   });
 }
 
+function recordAiSuccess(
+  operation: string,
+  result: {
+    provider: string;
+    model: string;
+    usage: { promptTokens: number; completionTokens?: number; totalTokens: number };
+    latencyMs: number;
+  },
+): void {
+  const labels = { operation, provider: result.provider, model: result.model };
+  aiRequestsTotal.inc({ ...labels, status: "success" });
+  aiRequestDurationMs.observe(labels, result.latencyMs);
+  aiTokensTotal.inc(
+    { provider: result.provider, model: result.model, token_type: "prompt" },
+    result.usage.promptTokens,
+  );
+  if (result.usage.completionTokens) {
+    aiTokensTotal.inc(
+      { provider: result.provider, model: result.model, token_type: "completion" },
+      result.usage.completionTokens,
+    );
+  }
+}
+
+function recordAiError(
+  operation: string,
+  provider?: string,
+  model?: string,
+): void {
+  aiRequestsTotal.inc({
+    operation,
+    provider: provider || "unknown",
+    model: model || "unknown",
+    status: "error",
+  });
+}
+
 app.use(helmet());
 app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
+app.use(telemetry.middleware);
 app.use(httpLogger);
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    const route = (req.route as { path?: string } | undefined)?.path || req.path;
+    httpRequestsTotal.inc({
+      method: req.method,
+      path: route,
+      status_code: res.statusCode,
+    });
+    httpRequestDurationMs.observe(
+      { method: req.method, path: route, status_code: res.statusCode },
+      duration,
+    );
+  });
+  next();
+});
 app.use(authMiddleware);
 app.use(
   rateLimit({
@@ -389,7 +454,8 @@ app.use(
     skip: (req) =>
       req.path === "/health" ||
       req.path === "/ping" ||
-      req.path === "/ready",
+      req.path === "/ready" ||
+      req.path === "/metrics",
   }),
 );
 
@@ -422,6 +488,11 @@ app.get("/ready", async (req: Request, res: Response) => {
   res.status(response.statusCode).json(response.body);
 });
 
+app.get("/metrics", async (_req: Request, res: Response) => {
+  res.set("Content-Type", metricsRegistry.contentType);
+  res.end(await metricsRegistry.metrics());
+});
+
 app.get("/providers", (req: Request, res: Response) => {
   req.log.info("listing providers");
   try {
@@ -452,14 +523,14 @@ app.post(
   "/v1/embeddings",
   validateEmbeddingRequest,
   async (req: Request, res: Response) => {
-    try {
-      const { input, model, provider, tenant_id } = req.body as {
-        input: string | string[];
-        model?: string;
-        provider?: string;
-        tenant_id?: string;
-      };
+    const { input, model, provider, tenant_id } = req.body as {
+      input: string | string[];
+      model?: string;
+      provider?: string;
+      tenant_id?: string;
+    };
 
+    try {
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
       const result = await withConcurrencyLimit(resolvedTenantId, () =>
@@ -495,6 +566,8 @@ app.post(
         "embedding request succeeded",
       );
 
+      recordAiSuccess("embedding", result);
+
       res.json(
         buildEmbeddingResponse({
           ...result,
@@ -502,6 +575,7 @@ app.post(
         }),
       );
     } catch (error) {
+      recordAiError("embedding", provider, model);
       handleOperationError(req, res, error, {
         operation: "embedding request",
         failureCode: ErrorCodes.aiEmbeddingFailed,
@@ -515,32 +589,33 @@ app.post(
   "/v1/chat/completions",
   validateChatCompletion,
   async (req: Request, res: Response) => {
+    const {
+      messages,
+      provider,
+      model,
+      max_tokens,
+      maxTokens,
+      temperature,
+      tenant_id,
+      task_type,
+      stream: isStream,
+      allow_fallback,
+      allowFallback,
+    } = req.body as {
+      messages: CompletionMessage[];
+      provider?: string;
+      model?: string;
+      max_tokens?: number;
+      maxTokens?: number;
+      temperature?: number;
+      tenant_id?: string;
+      task_type?: string;
+      stream?: boolean;
+      allow_fallback?: boolean;
+      allowFallback?: boolean;
+    };
+
     try {
-      const {
-        messages,
-        provider,
-        model,
-        max_tokens,
-        maxTokens,
-        temperature,
-        tenant_id,
-        task_type,
-        stream: isStream,
-        allow_fallback,
-        allowFallback,
-      } = req.body as {
-        messages: CompletionMessage[];
-        provider?: string;
-        model?: string;
-        max_tokens?: number;
-        maxTokens?: number;
-        temperature?: number;
-        tenant_id?: string;
-        task_type?: string;
-        stream?: boolean;
-        allow_fallback?: boolean;
-        allowFallback?: boolean;
-      };
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
       if (isStream) {
@@ -657,6 +732,8 @@ app.post(
         "chat completion succeeded",
       );
 
+      recordAiSuccess("chat_completion", result);
+
       res.json(
         buildChatCompletionResponse({
           ...result,
@@ -664,6 +741,7 @@ app.post(
         }),
       );
     } catch (error) {
+      recordAiError("chat_completion", provider, model);
       handleOperationError(req, res, error, {
         operation: "chat completion",
         failureCode: ErrorCodes.aiCompletionFailed,
@@ -677,30 +755,31 @@ app.post(
   "/complete",
   validateSimpleCompletion,
   async (req: Request, res: Response) => {
+    const {
+      prompt,
+      system,
+      provider,
+      model,
+      max_tokens,
+      maxTokens,
+      temperature,
+      tenant_id,
+      allow_fallback,
+      allowFallback,
+    } = req.body as {
+      prompt: string;
+      system?: string;
+      provider?: string;
+      model?: string;
+      max_tokens?: number;
+      maxTokens?: number;
+      temperature?: number;
+      tenant_id?: string;
+      allow_fallback?: boolean;
+      allowFallback?: boolean;
+    };
+
     try {
-      const {
-        prompt,
-        system,
-        provider,
-        model,
-        max_tokens,
-        maxTokens,
-        temperature,
-        tenant_id,
-        allow_fallback,
-        allowFallback,
-      } = req.body as {
-        prompt: string;
-        system?: string;
-        provider?: string;
-        model?: string;
-        max_tokens?: number;
-        maxTokens?: number;
-        temperature?: number;
-        tenant_id?: string;
-        allow_fallback?: boolean;
-        allowFallback?: boolean;
-      };
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
       const messages: CompletionMessage[] = [];
@@ -746,6 +825,8 @@ app.post(
         "simple completion succeeded",
       );
 
+      recordAiSuccess("simple_completion", result);
+
       res.json(
         buildSimpleCompletionResponse({
           ...result,
@@ -753,6 +834,7 @@ app.post(
         }),
       );
     } catch (error) {
+      recordAiError("simple_completion", provider, model);
       handleOperationError(req, res, error, {
         operation: "simple completion",
         failureCode: ErrorCodes.aiCompletionFailed,
@@ -796,47 +878,51 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // Only bind to a port when run directly (not imported by tests).
 // supertest creates its own ephemeral server from `app`.
 if (require.main === module) {
-  const server = app.listen(port, () => {
-    const enabledProviders = listProviders()
-      .filter((provider) => provider.enabled)
-      .map((provider) => provider.id);
-    logger.info(
-      {
-        port,
-        enabledProviders,
-      },
-      "AI Gateway started",
-    );
-  });
+  void (async () => {
+    await telemetry.start();
 
-  // Cloud Run sends SIGTERM, then SIGKILL after ~10s.
-  // Grace period: stop accepting new connections, drain in-flight requests.
-  const SHUTDOWN_TIMEOUT_MS = 8_000;
-
-  function shutdown(signal: string) {
-    logger.info({ signal }, "shutdown signal received, draining connections");
-    server.close(() => {
-      logger.info("all connections drained, exiting");
-      process.exit(0);
+    const server = app.listen(port, () => {
+      const enabledProviders = listProviders()
+        .filter((provider) => provider.enabled)
+        .map((provider) => provider.id);
+      logger.info(
+        {
+          port,
+          enabledProviders,
+        },
+        "AI Gateway started",
+      );
     });
-    setTimeout(() => {
-      logger.error("shutdown timed out, forcing exit");
-      process.exit(1);
-    }, SHUTDOWN_TIMEOUT_MS).unref();
-  }
 
-  process.on("SIGTERM", () => shutdown("SIGTERM"));
-  process.on("SIGINT", () => shutdown("SIGINT"));
+    // Cloud Run sends SIGTERM, then SIGKILL after ~10s.
+    // Grace period: stop accepting new connections, drain in-flight requests.
+    const SHUTDOWN_TIMEOUT_MS = 8_000;
 
-  process.on("unhandledRejection", (reason) => {
-    logger.error({ err: reason }, "unhandled promise rejection");
-    shutdown("unhandledRejection");
-  });
+    function shutdown(signal: string) {
+      logger.info({ signal }, "shutdown signal received, draining connections");
+      server.close(() => {
+        logger.info("all connections drained, flushing telemetry");
+        void telemetry.shutdown().finally(() => process.exit(0));
+      });
+      setTimeout(() => {
+        logger.error("shutdown timed out, forcing exit");
+        void telemetry.shutdown().finally(() => process.exit(1));
+      }, SHUTDOWN_TIMEOUT_MS).unref();
+    }
 
-  process.on("uncaughtException", (err) => {
-    logger.error({ err }, "uncaught exception");
-    shutdown("uncaughtException");
-  });
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+
+    process.on("unhandledRejection", (reason) => {
+      logger.error({ err: reason }, "unhandled promise rejection");
+      shutdown("unhandledRejection");
+    });
+
+    process.on("uncaughtException", (err) => {
+      logger.error({ err }, "uncaught exception");
+      shutdown("uncaughtException");
+    });
+  })();
 }
 
 export { app };
