@@ -3,6 +3,11 @@ import { ErrorCodes, type ErrorCode } from "../lib/error-codes";
 import { sanitizeProviderError } from "../lib/provider-errors";
 import { getSystemPromptForModel } from "../lib/base-prompts";
 import {
+  completionDedupCache,
+  buildCompletionDedupKey,
+  isDedupEnabled,
+} from "../lib/dedup-cache";
+import {
   CompletionRequest,
   CompletionResponse,
   CompletionStream,
@@ -318,7 +323,7 @@ export async function checkProviderReadiness(): Promise<
   return checks;
 }
 
-export async function complete(
+async function completeInner(
   request: CompletionRequest,
 ): Promise<CompletionResponse> {
   const normalized = normalizeRequestedProviderAndModel({
@@ -415,6 +420,29 @@ export async function complete(
   }
 
   throw lastError || new Error("All providers failed");
+}
+
+export async function complete(
+  request: CompletionRequest,
+): Promise<CompletionResponse> {
+  if (!isDedupEnabled()) {
+    return completeInner(request);
+  }
+
+  const dedupKey = buildCompletionDedupKey(request);
+  const { result, deduplicated } = await completionDedupCache.dedup(
+    dedupKey,
+    () => completeInner(request),
+  );
+
+  if (deduplicated) {
+    logger.info(
+      { tenantId: request.tenantId, provider: request.provider },
+      "request served from dedup cache",
+    );
+  }
+
+  return result as CompletionResponse;
 }
 
 export function completeStream(
