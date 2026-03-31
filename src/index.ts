@@ -29,6 +29,7 @@ import { ErrorCodes } from "./lib/error-codes";
 import { httpLogger, logger } from "./lib/logger";
 import { getRequestErrorResponse } from "./lib/request-errors";
 import { createTelemetryLifecycle } from "./lib/telemetry";
+import { enforceSpendCap, recordTenantTokenUsage } from "./lib/spend-tracking";
 import {
   enforceTenantPolicy,
   filterProvidersForTenant,
@@ -533,13 +534,16 @@ app.post(
     try {
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
+      const policy = enforceTenantPolicy({
+        tenantId: resolvedTenantId,
+        provider,
+        model,
+      });
+      enforceSpendCap(resolvedTenantId, policy.maxMonthlyTokens);
+
       const result = await withConcurrencyLimit(resolvedTenantId, () =>
         embed({
-          ...enforceTenantPolicy({
-            tenantId: resolvedTenantId,
-            provider,
-            model,
-          }),
+          ...policy,
           input,
           provider,
           model,
@@ -567,6 +571,7 @@ app.post(
       );
 
       recordAiSuccess("embedding", result);
+      recordTenantTokenUsage(resolvedTenantId, result.usage.totalTokens);
 
       res.json(
         buildEmbeddingResponse({
@@ -621,12 +626,13 @@ app.post(
       if (isStream) {
         req.setTimeout(120_000);
 
-        enforceTenantPolicy({
+        const streamPolicy = enforceTenantPolicy({
           tenantId: resolvedTenantId,
           provider,
           model,
           maxTokens: max_tokens ?? maxTokens,
         });
+        enforceSpendCap(resolvedTenantId, streamPolicy.maxMonthlyTokens);
 
         const stream = completeStream({
           messages,
@@ -693,14 +699,17 @@ app.post(
         return;
       }
 
+      const chatPolicy = enforceTenantPolicy({
+        tenantId: resolvedTenantId,
+        provider,
+        model,
+        maxTokens: max_tokens ?? maxTokens,
+      });
+      enforceSpendCap(resolvedTenantId, chatPolicy.maxMonthlyTokens);
+
       const result = await withConcurrencyLimit(resolvedTenantId, () =>
         complete({
-          ...enforceTenantPolicy({
-            tenantId: resolvedTenantId,
-            provider,
-            model,
-            maxTokens: max_tokens ?? maxTokens,
-          }),
+          ...chatPolicy,
           messages,
           provider,
           model,
@@ -733,6 +742,7 @@ app.post(
       );
 
       recordAiSuccess("chat_completion", result);
+      recordTenantTokenUsage(resolvedTenantId, result.usage.totalTokens);
 
       res.json(
         buildChatCompletionResponse({
@@ -782,6 +792,14 @@ app.post(
     try {
       const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
 
+      const simplePolicy = enforceTenantPolicy({
+        tenantId: resolvedTenantId,
+        provider,
+        model,
+        maxTokens: max_tokens ?? maxTokens,
+      });
+      enforceSpendCap(resolvedTenantId, simplePolicy.maxMonthlyTokens);
+
       const messages: CompletionMessage[] = [];
       if (system) {
         messages.push({ role: "system", content: system });
@@ -790,12 +808,7 @@ app.post(
 
       const result = await withConcurrencyLimit(resolvedTenantId, () =>
         complete({
-          ...enforceTenantPolicy({
-            tenantId: resolvedTenantId,
-            provider,
-            model,
-            maxTokens: max_tokens ?? maxTokens,
-          }),
+          ...simplePolicy,
           messages,
           provider,
           model,
@@ -826,6 +839,7 @@ app.post(
       );
 
       recordAiSuccess("simple_completion", result);
+      recordTenantTokenUsage(resolvedTenantId, result.usage.totalTokens);
 
       res.json(
         buildSimpleCompletionResponse({
