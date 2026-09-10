@@ -4,6 +4,27 @@ Multi-provider AI Gateway — a unified, secure, and high-performance middleware
 
 This service acts as a single point of entry for multiple AI providers, handling authentication, validation, and standardized request/response formats.
 
+**Live:** `curl https://ai-gateway-382299704849.europe-west2.run.app/health` →
+`{"status":"healthy","service":"ai-gateway","version":"3.0.0","providers":["openai","claude","gemini","xai","groq","perplexity"]}`
+(Cloud Run, europe-west2, min-instances 0; authenticated routes return 401 without a key.)
+
+## Features
+- OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`, SSE streaming
+- Bounded cross-provider fallback chain (`src/providers/index.ts`)
+- Per-tenant policies and monthly spend caps (`src/lib/tenant-policy.ts`, `src/lib/spend-tracking.ts`)
+- Request dedup cache, concurrency limiter, Prometheus `/metrics`, OpenTelemetry → Cloud Trace
+- Zod request validation and a versioned response contract enforced at runtime (`src/middleware/contract.ts`)
+
+```mermaid
+flowchart LR
+  C[Client] --> A[auth + validate] --> R[router: requested provider first]
+  R --> P1[claude] & P2[openai] & P3[gemini] & P4[xai] & P5[groq] & P6[perplexity]
+  R -->|failure| F[next in fallback chain, max 3]
+  A --> M[/metrics, OTel/]
+```
+
+Tests: `npm test` — 89 passing at this revision. Consumers: PrimărIA (`src/lib/ai/config.ts` there). EuFund migrated to direct SDK routing in May 2026.
+
 ## 🚀 Features
 
 - **Multi-Provider Support**: Seamlessly switch between or use multiple LLM providers.
@@ -21,12 +42,12 @@ This service acts as a single point of entry for multiple AI providers, handling
 
 ## 🛠️ Supported Providers
 
-- **OpenAI** (GPT-4o, GPT-3.5-Turbo)
-- **Anthropic** (Claude 3.5 Sonnet, Claude 3 Opus)
-- **Google** (Gemini 1.5 Pro/Flash)
-- **xAI** (Grok)
-- **Groq** (Llama 3, Mixtral)
-- **Perplexity** (Online search models)
+- **OpenAI** (GPT-5.2, GPT-5, GPT-5 mini, GPT-4.1 mini, GPT-4o, GPT-4o mini)
+- **Anthropic** (Claude Opus 4.1, Claude Opus 4, Claude Sonnet 4, Claude 3.7 Sonnet, Claude 3.5 Haiku)
+- **Google** (Gemini 3 Pro/Flash preview, Gemini 2.5 Pro/Flash/Flash-Lite)
+- **xAI** (Grok 3, Grok 3 mini, Grok 2)
+- **Groq** (Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B)
+- **Perplexity** (Sonar, Sonar Pro, Sonar Reasoning)
 
 ## 🔧 Environment Variables
 
@@ -96,7 +117,7 @@ The container `HEALTHCHECK` targets `GET /health` for cheap liveness. Use authen
 ## 🔍 Operational Notes
 
 - `/health` is a cheap liveness endpoint. Public `/ready` is intentionally cheap and non-probing. Deployment and traffic-gating checks must call authenticated `/ready`.
-- Production deployment must target the canonical Cloud Run service URL from `gcloud run services describe ai-gateway --project mitch-ai-services --region europe-central2 --format='value(status.url)'` rather than assuming a regional alias.
+- Production deployment must target the canonical Cloud Run service URL from `gcloud run services describe ai-gateway --project mitch-ai-services --region europe-west2 --format='value(status.url)'` rather than assuming a regional alias.
 - Error responses now include stable `error.code` values such as `routing.unsupported_provider`, `tenant.required`, and `concurrency.global_limit_reached` for alerting and log queries.
 - Provider fallback is capped to `MAX_FALLBACK_ATTEMPTS` and skips retries for non-retryable provider 4xx failures.
 - Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.

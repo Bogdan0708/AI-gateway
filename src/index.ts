@@ -37,11 +37,17 @@ import {
   TenantPolicyError,
 } from "./lib/tenant-policy";
 import { authMiddleware, isAuthorizedRequest } from "./middleware/auth";
+import { validateResponse } from "./middleware/contract";
 import {
   validateChatCompletion,
   validateEmbeddingRequest,
   validateSimpleCompletion,
 } from "./middleware/validate";
+import {
+  chatCompletionResponseSchema,
+  healthResponseSchema,
+  providersResponseSchema,
+} from "./contracts/v1.contract";
 import { estimateChatCost } from "./lib/estimate";
 import {
   checkProviderReadiness,
@@ -509,7 +515,7 @@ app.use(
   }),
 );
 
-app.get("/health", (_req: Request, res: Response) => {
+app.get("/health", validateResponse(healthResponseSchema), (_req: Request, res: Response) => {
   const enabledProviders = listProviders()
     .filter((provider) => provider.enabled)
     .map((provider) => provider.id);
@@ -531,7 +537,7 @@ app.get("/metrics", async (_req: Request, res: Response) => {
   res.end(await metricsRegistry.metrics());
 });
 
-app.get("/providers", (req: Request, res: Response) => {
+app.get("/providers", validateResponse(providersResponseSchema), (req: Request, res: Response) => {
   req.log.info("listing providers");
   try {
     const tenantId = resolveTenantId(getHeaderTenantId(req), undefined);
@@ -717,6 +723,7 @@ app.post(
 app.post(
   "/v1/chat/completions",
   validateChatCompletion,
+  validateResponse(chatCompletionResponseSchema),
   async (req: Request, res: Response) => {
     const {
       messages,
