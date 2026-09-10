@@ -42,6 +42,7 @@ import {
   validateEmbeddingRequest,
   validateSimpleCompletion,
 } from "./middleware/validate";
+import { estimateChatCost } from "./lib/estimate";
 import {
   checkProviderReadiness,
   complete,
@@ -49,6 +50,7 @@ import {
   CompletionRoutingError,
   embed,
   listProviders,
+  resolveCompletionTarget,
 } from "./providers";
 import {
   aiRequestDurationMs,
@@ -308,6 +310,41 @@ export function buildSimpleCompletionResponse(input: {
     model: input.model,
     usage: input.usage,
     latency_ms: input.latencyMs,
+    tenant_id: input.tenantId,
+  };
+}
+
+export function buildEstimateResponse(input: {
+  provider: string;
+  model: string;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+  costUsd: number;
+  costCents: number;
+  inputCostPer1KUsd: number;
+  outputCostPer1KUsd: number;
+  tenantId?: string;
+}) {
+  return {
+    object: "estimate",
+    provider: input.provider,
+    model: input.model,
+    usage: {
+      prompt_tokens: input.usage.promptTokens,
+      completion_tokens: input.usage.completionTokens,
+      total_tokens: input.usage.totalTokens,
+    },
+    cost: {
+      usd: input.costUsd,
+      cents: input.costCents,
+    },
+    pricing: {
+      input_per_1k_usd: input.inputCostPer1KUsd,
+      output_per_1k_usd: input.outputCostPer1KUsd,
+    },
     tenant_id: input.tenantId,
   };
 }
@@ -585,6 +622,93 @@ app.post(
         operation: "embedding request",
         failureCode: ErrorCodes.aiEmbeddingFailed,
         failureMessage: "AI embedding failed",
+      });
+    }
+  },
+);
+
+app.post(
+  "/v1/estimate",
+  validateChatCompletion,
+  async (req: Request, res: Response) => {
+    const {
+      messages,
+      provider,
+      model,
+      max_tokens,
+      maxTokens,
+      tenant_id,
+      allow_fallback,
+      allowFallback,
+    } = req.body as {
+      messages: CompletionMessage[];
+      provider?: string;
+      model?: string;
+      max_tokens?: number;
+      maxTokens?: number;
+      tenant_id?: string;
+      allow_fallback?: boolean;
+      allowFallback?: boolean;
+    };
+
+    try {
+      const resolvedTenantId = resolveTenantId(getHeaderTenantId(req), tenant_id);
+      const policy = enforceTenantPolicy({
+        tenantId: resolvedTenantId,
+        provider,
+        model,
+        maxTokens: max_tokens ?? maxTokens,
+      });
+
+      const target = resolveCompletionTarget({
+        provider,
+        model,
+        allowFallback: allow_fallback ?? allowFallback,
+        allowedProviders: policy.allowedProviders,
+        allowedModels: policy.allowedModels,
+      });
+
+      const estimate = estimateChatCost({
+        messages,
+        provider: target.provider,
+        model: target.model,
+        maxTokens: max_tokens ?? maxTokens,
+      });
+
+      req.log.info(
+        {
+          tenantId: resolvedTenantId,
+          requestedProvider: provider,
+          requestedModel: model,
+          provider: target.provider,
+          model: target.model,
+          estimatedTotalTokens: estimate.totalTokens,
+          estimatedCostUsd: estimate.costUsd,
+        },
+        "chat completion estimate generated",
+      );
+
+      res.json(
+        buildEstimateResponse({
+          provider: target.provider,
+          model: target.model,
+          usage: {
+            promptTokens: estimate.promptTokens,
+            completionTokens: estimate.completionTokens,
+            totalTokens: estimate.totalTokens,
+          },
+          costUsd: estimate.costUsd,
+          costCents: estimate.costCents,
+          inputCostPer1KUsd: estimate.inputCostPer1KUsd,
+          outputCostPer1KUsd: estimate.outputCostPer1KUsd,
+          tenantId: resolvedTenantId,
+        }),
+      );
+    } catch (error) {
+      handleOperationError(req, res, error, {
+        operation: "chat completion estimate",
+        failureCode: ErrorCodes.aiCompletionFailed,
+        failureMessage: "AI completion estimate failed",
       });
     }
   },

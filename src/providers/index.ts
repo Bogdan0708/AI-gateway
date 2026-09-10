@@ -445,6 +445,55 @@ export async function complete(
   return result as CompletionResponse;
 }
 
+export function resolveCompletionTarget(
+  request: Pick<
+    CompletionRequest,
+    "provider" | "model" | "allowFallback" | "allowedProviders" | "allowedModels"
+  >,
+): {
+  provider: ProviderName;
+  model: string;
+} {
+  const normalized = normalizeRequestedProviderAndModel({
+    provider: request.provider,
+    model: request.model,
+  });
+  const providersInOrder = resolveProviderOrder(
+    normalized.provider,
+    normalized.model,
+    request.allowFallback ?? false,
+    request.allowedProviders,
+    request.allowedModels,
+  ).slice(0, getMaxFallbackAttempts());
+
+  if (providersInOrder.length === 0) {
+    throw new Error("No AI providers configured");
+  }
+
+  for (const provider of providersInOrder) {
+    const modelCandidates = getModelCandidates({
+      provider,
+      requestedModel: normalized.model,
+      allowedModels: request.allowedModels,
+    });
+
+    if (modelCandidates.length === 0) {
+      continue;
+    }
+
+    return {
+      provider: provider.name,
+      model: modelCandidates[0],
+    };
+  }
+
+  throw new CompletionRoutingError(
+    "No compatible provider/model target available",
+    400,
+    ErrorCodes.routingUnsupportedModel,
+  );
+}
+
 export function completeStream(
   request: CompletionRequest,
 ): CompletionStream {

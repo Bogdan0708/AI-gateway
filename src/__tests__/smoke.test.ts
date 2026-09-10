@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildChatCompletionResponse,
+  buildEstimateResponse,
   buildEmbeddingResponse,
   buildHealthResponse,
   buildSimpleCompletionResponse,
@@ -67,6 +68,27 @@ describe("response builders", () => {
     expect(response.provider).toBe("openai");
     expect(response.model).toBe("gpt-4o-mini");
     expect(response.usage.totalTokens).toBe(11);
+    expect(response.tenant_id).toBe("tenant-a");
+  });
+
+  it("builds the estimate response shape", () => {
+    const response = buildEstimateResponse({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      usage: { promptTokens: 12, completionTokens: 256, totalTokens: 268 },
+      costUsd: 0.000155,
+      costCents: 0.0155,
+      inputCostPer1KUsd: 0.00015,
+      outputCostPer1KUsd: 0.0006,
+      tenantId: "tenant-a",
+    });
+
+    expect(response.object).toBe("estimate");
+    expect(response.provider).toBe("openai");
+    expect(response.model).toBe("gpt-4o-mini");
+    expect(response.usage.total_tokens).toBe(268);
+    expect(response.cost.usd).toBe(0.000155);
+    expect(response.pricing.input_per_1k_usd).toBe(0.00015);
     expect(response.tenant_id).toBe("tenant-a");
   });
 });

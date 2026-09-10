@@ -48,6 +48,9 @@ The gateway requires the following environment variables to function:
 | `XAI_API_KEY` | (Optional) Enables xAI Grok provider |
 | `GROQ_API_KEY` | (Optional) Enables Groq provider |
 | `PERPLEXITY_API_KEY` | (Optional) Enables Perplexity provider |
+| `OTEL_ENABLED` | Set to `true` to enable OpenTelemetry tracing export |
+| `OTEL_SERVICE_NAME` | Override trace service name (default: `ai-gateway`) |
+| `OTEL_SERVICE_VERSION` | Override trace service version (defaults to package version) |
 
 ## 📦 Getting Started
 
@@ -99,6 +102,8 @@ The container `HEALTHCHECK` targets `GET /health` for cheap liveness. Use authen
 - Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.
 - A deployment-ready environment template is available at [`docs/cloud-run.env.example`](/home/godja/Dev/ai-gateway/docs/cloud-run.env.example).
 - A production rollout checklist with suggested starting values is available at [`docs/cloud-run-rollout.md`](/home/godja/Dev/ai-gateway/docs/cloud-run-rollout.md).
+- A Cloud Monitoring alert setup guide (with automation script) is available at [`docs/cloud-monitoring-alerts.md`](/home/godja/Dev/ai-gateway/docs/cloud-monitoring-alerts.md).
+- A rate-limit validation load-test guide is available at [`docs/rate-limit-load-test.md`](/home/godja/Dev/ai-gateway/docs/rate-limit-load-test.md).
 - A shared consumer compatibility matrix is available at [`docs/COMPATIBILITY.md`](/home/godja/Dev/ai-gateway/docs/COMPATIBILITY.md).
 - A release gating checklist is available at [`docs/RELEASE-PROCESS.md`](/home/godja/Dev/ai-gateway/docs/RELEASE-PROCESS.md).
 - A shared live validation guide for Taxes and EU-Funds is available at [`docs/consumer-validation.md`](/home/godja/Dev/ai-gateway/docs/consumer-validation.md).

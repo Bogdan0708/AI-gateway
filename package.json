@@ -9,6 +9,7 @@
     "dev": "ts-node src/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "loadtest:rate-limit": "node scripts/rate-limit-load-test.mjs",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix"
   },

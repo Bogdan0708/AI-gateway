@@ -98,6 +98,26 @@ export const chatCompletionResponseSchema = z.object({
   tenant_id: z.string().min(1).optional(),
 });
 
+export const estimateResponseSchema = z.object({
+  object: z.literal("estimate"),
+  provider: providerNameSchema,
+  model: z.string().min(1),
+  usage: z.object({
+    prompt_tokens: z.number().int().min(0),
+    completion_tokens: z.number().int().min(0),
+    total_tokens: z.number().int().min(0),
+  }),
+  cost: z.object({
+    usd: z.number().min(0),
+    cents: z.number().min(0),
+  }),
+  pricing: z.object({
+    input_per_1k_usd: z.number().min(0),
+    output_per_1k_usd: z.number().min(0),
+  }),
+  tenant_id: z.string().min(1).optional(),
+});
+
 export const simpleCompletionResponseSchema = z.object({
   content: z.string(),
   provider: providerNameSchema,
@@ -118,4 +138,3 @@ export const structuredErrorResponseSchema = z.object({
     code: z.string().min(1).optional(),
   }),
 });
-
