@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   authenticatedReadinessResponseSchema,
   chatCompletionResponseSchema,
+  estimateResponseSchema,
   embeddingsResponseSchema,
   healthResponseSchema,
   providersResponseSchema,
@@ -118,6 +119,30 @@ describe("v1 response contracts", () => {
           total_tokens: 15,
         },
         latency_ms: 42,
+        tenant_id: "tenant-a",
+      }),
+    ).not.toThrow();
+  });
+
+  it("accepts the /v1/estimate response shape", () => {
+    expect(() =>
+      estimateResponseSchema.parse({
+        object: "estimate",
+        provider: "openai",
+        model: "gpt-4o-mini",
+        usage: {
+          prompt_tokens: 12,
+          completion_tokens: 256,
+          total_tokens: 268,
+        },
+        cost: {
+          usd: 0.000155,
+          cents: 0.0155,
+        },
+        pricing: {
+          input_per_1k_usd: 0.00015,
+          output_per_1k_usd: 0.0006,
+        },
         tenant_id: "tenant-a",
       }),
     ).not.toThrow();

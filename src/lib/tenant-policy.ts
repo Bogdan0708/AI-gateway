@@ -7,6 +7,7 @@ const tenantPolicySchema = z.object({
   allowedModels: z.array(z.string()).optional(),
   maxTokens: z.number().int().positive().optional(),
   maxConcurrentRequests: z.number().int().positive().optional(),
+  maxMonthlyTokens: z.number().int().positive().optional(),
 });
 
 const policiesSchema = z.record(z.string(), tenantPolicySchema);
@@ -16,6 +17,7 @@ interface TenantPolicyConfig {
   allowedModels?: string[];
   maxTokens?: number;
   maxConcurrentRequests?: number;
+  maxMonthlyTokens?: number;
 }
 
 interface ParsedTenantPolicyConfig {
@@ -149,6 +151,7 @@ export function enforceTenantPolicy(input: {
   tenantId?: string;
   allowedProviders?: ProviderName[];
   allowedModels?: string[];
+  maxMonthlyTokens?: number;
 } {
   const config = loadTenantPolicyConfig();
 
@@ -217,6 +220,7 @@ export function enforceTenantPolicy(input: {
     tenantId: input.tenantId,
     allowedProviders: policy.allowedProviders,
     allowedModels: policy.allowedModels,
+    maxMonthlyTokens: policy.maxMonthlyTokens,
   };
 }
 

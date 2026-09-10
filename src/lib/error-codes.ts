@@ -8,6 +8,7 @@ export const ErrorCodes = {
   tenantProviderDenied: "tenant.provider_denied",
   tenantModelDenied: "tenant.model_denied",
   tenantMaxTokensExceeded: "tenant.max_tokens_exceeded",
+  tenantSpendCapReached: "tenant.spend_cap_reached",
   concurrencyGlobalLimitReached: "concurrency.global_limit_reached",
   concurrencyTenantLimitReached: "concurrency.tenant_limit_reached",
   requestBodyTooLarge: "request.body_too_large",

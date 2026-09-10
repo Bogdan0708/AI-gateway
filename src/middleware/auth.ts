@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from "express";
 import { createHash, timingSafeEqual } from "node:crypto";
 
-const PUBLIC_PATHS = new Set(["/health", "/ping", "/ready"]);
+const PUBLIC_PATHS = new Set(["/health", "/ping", "/ready", "/metrics"]);
 
 function safeCompare(a: string, b: string): boolean {
   const aHash = createHash("sha256").update(a).digest();
