@@ -95,14 +95,14 @@ This document provides step-by-step procedures for responding to common operatio
 **Procedure:**
 1. **List Revisions:**
    ```bash
-   gcloud run revisions list --service ai-gateway --region europe-central2 --limit 5
+   gcloud run revisions list --service ai-gateway --region europe-west2 --limit 5
    ```
 2. **Identify Stable Revision:** Look for the revision ID that was active before the latest deployment.
 3. **Rollback Traffic:**
    ```bash
    gcloud run services update-traffic ai-gateway \
      --to-revisions=STABLE_REVISION_ID=100 \
-     --region europe-central2
+     --region europe-west2
    ```
 4. **Verify Rollback:**
    - Confirm `GET /health` and `GET /ready` return 200 on the rolled-back revision.

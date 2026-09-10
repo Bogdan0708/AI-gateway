@@ -42,12 +42,14 @@ Tests: `npm test` — 89 passing at this revision. Consumers: PrimărIA (`src/li
 
 ## 🛠️ Supported Providers
 
-- **OpenAI** (GPT-5.2, GPT-5, GPT-5 mini, GPT-4.1 mini, GPT-4o, GPT-4o mini)
-- **Anthropic** (Claude Opus 4.1, Claude Opus 4, Claude Sonnet 4, Claude 3.7 Sonnet, Claude 3.5 Haiku)
-- **Google** (Gemini 3 Pro/Flash preview, Gemini 2.5 Pro/Flash/Flash-Lite)
-- **xAI** (Grok 3, Grok 3 mini, Grok 2)
-- **Groq** (Llama 3.3 70B, Llama 3.1 8B, Mixtral 8x7B)
-- **Perplexity** (Sonar, Sonar Pro, Sonar Reasoning)
+- **OpenAI**
+- **Anthropic**
+- **Google**
+- **xAI**
+- **Groq**
+- **Perplexity**
+
+Model ids are configured per provider adapter (see `src/providers/*.ts`); requests may name any id the upstream provider accepts.
 
 ## 🔧 Environment Variables
 
@@ -121,14 +123,14 @@ The container `HEALTHCHECK` targets `GET /health` for cheap liveness. Use authen
 - Error responses now include stable `error.code` values such as `routing.unsupported_provider`, `tenant.required`, and `concurrency.global_limit_reached` for alerting and log queries.
 - Provider fallback is capped to `MAX_FALLBACK_ATTEMPTS` and skips retries for non-retryable provider 4xx failures.
 - Tenant policy can be rolled out gradually by setting `TENANT_POLICIES_JSON` first, then enabling `REQUIRE_TENANT_ID=true` once clients are sending tenant identity consistently.
-- A deployment-ready environment template is available at [`docs/cloud-run.env.example`](/home/godja/Dev/ai-gateway/docs/cloud-run.env.example).
-- A production rollout checklist with suggested starting values is available at [`docs/cloud-run-rollout.md`](/home/godja/Dev/ai-gateway/docs/cloud-run-rollout.md).
-- A Cloud Monitoring alert setup guide (with automation script) is available at [`docs/cloud-monitoring-alerts.md`](/home/godja/Dev/ai-gateway/docs/cloud-monitoring-alerts.md).
-- A rate-limit validation load-test guide is available at [`docs/rate-limit-load-test.md`](/home/godja/Dev/ai-gateway/docs/rate-limit-load-test.md).
-- A shared consumer compatibility matrix is available at [`docs/COMPATIBILITY.md`](/home/godja/Dev/ai-gateway/docs/COMPATIBILITY.md).
-- A release gating checklist is available at [`docs/RELEASE-PROCESS.md`](/home/godja/Dev/ai-gateway/docs/RELEASE-PROCESS.md).
-- A shared live validation guide for Taxes and EU-Funds is available at [`docs/consumer-validation.md`](/home/godja/Dev/ai-gateway/docs/consumer-validation.md).
-- Contract schemas for the current response surface live in [`src/contracts/v1.contract.ts`](/home/godja/Dev/ai-gateway/src/contracts/v1.contract.ts).
+- A deployment-ready environment template is available at [`docs/cloud-run.env.example`](docs/cloud-run.env.example).
+- A production rollout checklist with suggested starting values is available at [`docs/cloud-run-rollout.md`](docs/cloud-run-rollout.md).
+- A Cloud Monitoring alert setup guide (with automation script) is available at [`docs/cloud-monitoring-alerts.md`](docs/cloud-monitoring-alerts.md).
+- A rate-limit validation load-test guide is available at [`docs/rate-limit-load-test.md`](docs/rate-limit-load-test.md).
+- A shared consumer compatibility matrix is available at [`docs/COMPATIBILITY.md`](docs/COMPATIBILITY.md).
+- A release gating checklist is available at [`docs/RELEASE-PROCESS.md`](docs/RELEASE-PROCESS.md).
+- A shared live validation guide for Taxes and EU-Funds is available at [`docs/consumer-validation.md`](docs/consumer-validation.md).
+- Contract schemas for the current response surface live in [`src/contracts/v1.contract.ts`](src/contracts/v1.contract.ts).
 
 ---
 *Maintained by Bogdan — Part of the Mitch From Transylvania ecosystem.*

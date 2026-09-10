@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
-import type { ZodTypeAny } from 'zod';
+import type { z } from 'zod';
 
-export function validateResponse(schema: ZodTypeAny) {
+export function validateResponse(schema: z.ZodType) {
   return (req: Request, res: Response, next: NextFunction) => {
     const original = res.json.bind(res);
     res.json = ((body: unknown) => {

@@ -4,3 +4,4 @@ dist/
 *.log
 .claude/skills/
 .codex/
+docs/PRODUCTION-PLAN.md
