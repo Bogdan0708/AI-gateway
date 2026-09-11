@@ -25,21 +25,6 @@ flowchart LR
 
 Tests: `npm test` — 89 passing at this revision. Consumers: PrimărIA (`src/lib/ai/config.ts` there). EuFund migrated to direct SDK routing in May 2026.
 
-## 🚀 Features
-
-- **Multi-Provider Support**: Seamlessly switch between or use multiple LLM providers.
-- **Unified API**: OpenAI-compatible chat completion endpoints.
-- **Security First**: 
-  - Token-based authentication via `GATEWAY_MASTER_KEY`.
-  - Security headers with `helmet`.
-  - CORS configuration for multi-tenant support.
-  - Rate limiting to prevent abuse.
-- **Production Ready**: 
-  - Optimized for **GCP Cloud Run** (Docker support).
-  - Fast cold starts and small image footprint.
-  - Health and monitoring endpoints.
-  - Structured logging with `pino`.
-
 ## 🛠️ Supported Providers
 
 - **OpenAI**
