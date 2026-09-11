@@ -7,6 +7,7 @@ This service acts as a single point of entry for multiple AI providers, handling
 **Live:** `curl https://ai-gateway-382299704849.europe-west2.run.app/health` →
 `{"status":"healthy","service":"ai-gateway","version":"3.0.0","providers":["openai","claude","gemini","xai","groq","perplexity"]}`
 (Cloud Run, europe-west2, min-instances 0; authenticated routes return 401 without a key.)
+The deployed revision reports `commit` in `/health` from the next deploy onward; until then the running revision is not tied to a published commit.
 
 ## Features
 - OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`, SSE streaming

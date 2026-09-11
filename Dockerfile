@@ -23,6 +23,12 @@ RUN npm run build
 FROM node:20-alpine AS production
 WORKDIR /app
 
+# Identify the commit this image was built from (passed via --build-arg at
+# build time); surfaced in the /health response so the deployed revision can
+# be tied back to a published commit.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 # Security: non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001

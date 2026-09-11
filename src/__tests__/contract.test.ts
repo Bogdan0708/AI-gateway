@@ -24,6 +24,19 @@ describe("v1 response contracts", () => {
     ).not.toThrow();
   });
 
+  it("accepts a /health response shape with a commit field", () => {
+    expect(() =>
+      healthResponseSchema.parse({
+        status: "healthy",
+        service: "ai-gateway",
+        version: "3.0.0",
+        providers: ["openai", "claude"],
+        timestamp: "2026-03-11T00:00:00.000Z",
+        commit: "deadbeef",
+      }),
+    ).not.toThrow();
+  });
+
   it("accepts the current public /ready response shape", () => {
     expect(() =>
       publicReadinessResponseSchema.parse({

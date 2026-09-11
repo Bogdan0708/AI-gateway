@@ -17,6 +17,7 @@ export const healthResponseSchema = z.object({
   version: z.string().min(1),
   providers: z.array(providerNameSchema),
   timestamp: isoTimestampSchema,
+  commit: z.string().min(1).optional(),
 });
 
 export const readinessProviderSchema = z.object({

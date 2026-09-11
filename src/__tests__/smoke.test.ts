@@ -15,6 +15,36 @@ describe("response builders", () => {
     expect(response.service).toBe("ai-gateway");
     expect(response.providers).toEqual(["openai"]);
     expect(response.timestamp).toBeDefined();
+    expect(typeof response.commit).toBe("string");
+  });
+
+  it("reports commit from GIT_SHA, falling back to K_REVISION then unknown", () => {
+    const originalGitSha = process.env.GIT_SHA;
+    const originalKRevision = process.env.K_REVISION;
+    try {
+      delete process.env.GIT_SHA;
+      delete process.env.K_REVISION;
+      expect(buildHealthResponse(["openai"]).commit).toBe("unknown");
+
+      process.env.K_REVISION = "ai-gateway-00042-abc";
+      expect(buildHealthResponse(["openai"]).commit).toBe(
+        "ai-gateway-00042-abc",
+      );
+
+      process.env.GIT_SHA = "deadbeef";
+      expect(buildHealthResponse(["openai"]).commit).toBe("deadbeef");
+    } finally {
+      if (originalGitSha === undefined) {
+        delete process.env.GIT_SHA;
+      } else {
+        process.env.GIT_SHA = originalGitSha;
+      }
+      if (originalKRevision === undefined) {
+        delete process.env.K_REVISION;
+      } else {
+        process.env.K_REVISION = originalKRevision;
+      }
+    }
   });
 
   it("builds the embeddings response shape", () => {
