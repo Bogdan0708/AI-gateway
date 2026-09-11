@@ -221,6 +221,7 @@ export function buildHealthResponse(
   version: string;
   providers: string[];
   timestamp: string;
+  commit: string;
 } {
   return {
     status: "healthy",
@@ -228,6 +229,7 @@ export function buildHealthResponse(
     version: APP_VERSION,
     providers: enabledProviders,
     timestamp: new Date().toISOString(),
+    commit: process.env.GIT_SHA ?? process.env.K_REVISION ?? "unknown",
   };
 }
 
