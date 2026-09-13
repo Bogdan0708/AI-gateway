@@ -1,13 +1,10 @@
 # AI Gateway v3.0.0
 
-Multi-provider AI Gateway — a unified, secure, and high-performance middleware for all Bogdan projects. 
+Multi-provider LLM middleware consumed by PrimărIA's fiscal assistant, with authentication, request validation, routing controls and an OpenAI-compatible API.
 
-This service acts as a single point of entry for multiple AI providers, handling authentication, validation, and standardized request/response formats.
+**Status: offline portfolio project.** No hosted application demo or current production operation is offered. The owner has explicitly chosen to keep AI Gateway, MitchAI, EuFund and PrimărIA offline; Salt & Standard is the live business site. Historical Cloud Run URLs are not advertised as current deployment evidence.
 
-**Live:** `curl https://ai-gateway-382299704849.europe-west2.run.app/health` →
-`{"status":"healthy","service":"ai-gateway","version":"3.0.0","providers":["openai","claude","gemini","xai","groq","perplexity"]}`
-(Cloud Run, europe-west2, min-instances 0; authenticated routes return 401 without a key.)
-The deployed revision reports `commit` in `/health` from the next deploy onward; until then the running revision is not tied to a published commit.
+The manual deployment tooling is retained as implementation evidence. It verifies a named no-traffic revision, exact source commit, anonymous readiness and traffic readback, with verified rollback on failure. It is not an instruction to deploy this project.
 
 ## Features
 - OpenAI-compatible `/v1/chat/completions` and `/v1/embeddings`, SSE streaming
@@ -24,7 +21,7 @@ flowchart LR
   A --> M[/metrics, OTel/]
 ```
 
-Tests: `npm test` — 89 passing at this revision. Consumers: PrimărIA (`src/lib/ai/config.ts` there). EuFund migrated to direct SDK routing in May 2026.
+Tests: `npm test` — 91 application tests, plus six mocked deployment safety tests. Consumers: PrimărIA (`src/lib/ai/config.ts` there). EuFund migrated to direct SDK routing in May 2026.
 
 ## 🛠️ Supported Providers
 
