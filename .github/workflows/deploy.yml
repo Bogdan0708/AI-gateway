@@ -9,10 +9,9 @@ concurrency:
 
 env:
   PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID || 'mitch-ai-services' }}
-  REGION: ${{ vars.GCP_REGION || 'europe-central2' }}
+  REGION: ${{ vars.GCP_REGION || 'europe-west2' }}
   SERVICE: ai-gateway
   IMAGE: gcr.io/${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID || 'mitch-ai-services' }}/ai-gateway
-  GATEWAY_MASTER_KEY: ${{ secrets.GATEWAY_MASTER_KEY }}
 
 jobs:
   ci:
@@ -52,35 +51,7 @@ jobs:
           docker push "$IMAGE:$GITHUB_SHA"
           docker push "$IMAGE:latest"
 
-      - name: Deploy to Cloud Run
-        run: |
-          gcloud run deploy "$SERVICE" \
-            --image "$IMAGE:$GITHUB_SHA" \
-            --project "$PROJECT_ID" \
-            --region "$REGION" \
-            --platform managed \
-            --no-traffic \
-            --tag "sha-${GITHUB_SHA::7}"
-
-      - name: Smoke-test canary revision
-        run: |
-          CANARY_URL=$(gcloud run services describe "$SERVICE" \
-            --project "$PROJECT_ID" \
-            --region "$REGION" \
-            --format='value(status.traffic[tag=sha-'"${GITHUB_SHA::7}"'].url)')
-          BODY=$(curl -fsS "$CANARY_URL/ready" \
-            -H "Authorization: Bearer $GATEWAY_MASTER_KEY")
-          STATUS=$(printf '%s' "$BODY" | grep -o '"status":"[^"]*"' | head -n1 | cut -d: -f2 | tr -d '"')
-          if [ "$STATUS" != "ready" ]; then
-            echo "::error::Canary readiness check failed"
-            printf '%s\n' "$BODY"
-            exit 1
-          fi
-          echo "Canary healthy at $CANARY_URL"
-
-      - name: Promote canary to 100% traffic
-        run: |
-          gcloud run services update-traffic "$SERVICE" \
-            --project "$PROJECT_ID" \
-            --region "$REGION" \
-            --to-revisions=LATEST=100
+      - name: Deploy, verify exact revision and promote
+        env:
+          GIT_SHA: ${{ github.sha }}
+        run: bash scripts/deploy-canary.sh

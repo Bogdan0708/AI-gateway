@@ -33,7 +33,9 @@ jobs:
 
       - name: Audit
         run: npm audit --omit=dev --audit-level=high
-        continue-on-error: true
+
+      - name: Deployment safety tests
+        run: python3 -m unittest discover -s tests-deploy -v
 
       - name: Build
         run: npm run build
